@@ -26,6 +26,7 @@ class VT100Parser:
         self.current_param = ""
         self.private_mode = False
         self.secondary_da = False
+        self.csi_prefix = ""
         self.osc_payload = ""
 
         # Terminal Flags
@@ -33,6 +34,8 @@ class VT100Parser:
         self.bracketed_paste_mode = False
         self.mouse_tracking = False     # ?1000h (Normal tracking)
         self.sgr_mouse_mode = False      # ?1006h (SGR decimal format)
+        self.kitty_keyboard_flags = 0
+        self.kitty_keyboard_stack: list[int] = []
 
     def feed(self, text: str):
         for char in text:
@@ -69,6 +72,7 @@ class VT100Parser:
             self.current_param = ""
             self.private_mode = False
             self.secondary_da = False
+            self.csi_prefix = ""
         elif char == "]":
             self.state = self.STATE_OSC
             self.osc_payload = ""
@@ -92,10 +96,12 @@ class VT100Parser:
             self.state = self.STATE_GROUND
 
     def _handle_csi(self, char: str):
-        if char == "?":
-            self.private_mode = True
-        elif char == ">":
-            self.secondary_da = True
+        if char in ("?", ">", "=", "<"):
+            self.csi_prefix = char
+            if char == "?":
+                self.private_mode = True
+            elif char == ">":
+                self.secondary_da = True
         elif "0" <= char <= "9":
             self.current_param += char
         elif char == ";":
@@ -111,7 +117,7 @@ class VT100Parser:
         p = self.params
         val1 = p[0] if (p and p[0] > 0) else 1
 
-        if self.private_mode:
+        if self.private_mode and final in ("h", "l"):
             enable = (final == "h")
             for mode in (p if p else [0]):
                 if mode == 1:
@@ -179,6 +185,26 @@ class VT100Parser:
             elif p and p[0] == 5:
                 # Terminal status OK
                 self._send_response(b"\x1b[0n")
+        elif final == "u":
+            # Kitty Extended Keyboard Protocol negotiation
+            if self.csi_prefix == "?":
+                # Query keyboard protocol flags
+                self._send_response(f"\x1b[?{self.kitty_keyboard_flags}u".encode("ascii"))
+            elif self.csi_prefix == ">":
+                # Push flags
+                self.kitty_keyboard_stack.append(self.kitty_keyboard_flags)
+                self.kitty_keyboard_flags = p[0] if p else 0
+            elif self.csi_prefix == "<":
+                # Pop flags
+                pop_count = p[0] if p else 1
+                for _ in range(pop_count):
+                    if self.kitty_keyboard_stack:
+                        self.kitty_keyboard_flags = self.kitty_keyboard_stack.pop()
+                    else:
+                        self.kitty_keyboard_flags = 0
+            elif self.csi_prefix == "=":
+                # Set flags
+                self.kitty_keyboard_flags = p[0] if p else 0
 
     def _send_response(self, data: bytes):
         if self.write_response:
@@ -208,3 +234,16 @@ class VT100Parser:
         elif payload == "11;?" or payload.startswith("11;?"):
             bg_hex = f"{DEFAULT_BG[0]:02x}{DEFAULT_BG[0]:02x}/{DEFAULT_BG[1]:02x}{DEFAULT_BG[1]:02x}/{DEFAULT_BG[2]:02x}{DEFAULT_BG[2]:02x}"
             self._send_response(f"\x1b]11;rgb:{bg_hex}\x1b\\".encode("ascii"))
+        # OSC 133 Semantic Prompts / Shell Integration
+        elif payload.startswith("133;"):
+            parts = payload.split(";")
+            cmd = parts[1] if len(parts) > 1 else ""
+            if cmd == "A":
+                self.screen.mark_prompt_start()
+            elif cmd == "B":
+                self.screen.mark_prompt_end()
+            elif cmd == "C":
+                self.screen.mark_command_executed()
+            elif cmd == "D":
+                exit_code = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+                self.screen.mark_command_finished(exit_code)
