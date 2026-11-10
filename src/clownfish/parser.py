@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+from clownfish.models import DEFAULT_BG, DEFAULT_FG
 from clownfish.screen import ScreenBuffer
 
 
@@ -24,6 +25,7 @@ class VT100Parser:
         self.params: list[int] = []
         self.current_param = ""
         self.private_mode = False
+        self.secondary_da = False
         self.osc_payload = ""
 
         # Terminal Flags
@@ -66,6 +68,7 @@ class VT100Parser:
             self.params = []
             self.current_param = ""
             self.private_mode = False
+            self.secondary_da = False
         elif char == "]":
             self.state = self.STATE_OSC
             self.osc_payload = ""
@@ -91,6 +94,8 @@ class VT100Parser:
     def _handle_csi(self, char: str):
         if char == "?":
             self.private_mode = True
+        elif char == ">":
+            self.secondary_da = True
         elif "0" <= char <= "9":
             self.current_param += char
         elif char == ";":
@@ -159,6 +164,25 @@ class VT100Parser:
                 self.screen.scroll_top = top
                 self.screen.scroll_bottom = bottom
                 self.screen.move_cursor(0, 0)
+        elif final == "c":
+            if self.secondary_da:
+                # Secondary Device Attributes (DA2) - VT220/xterm
+                self._send_response(b"\x1b[>1;10;0c")
+            else:
+                # Primary Device Attributes (DA1) - VT220 response
+                self._send_response(b"\x1b[?62;c")
+        elif final == "n":
+            if p and p[0] == 6:
+                # Device Status Report / Cursor Position Query (CPR)
+                cpr = f"\x1b[{self.screen.cursor_y + 1};{self.screen.cursor_x + 1}R".encode("ascii")
+                self._send_response(cpr)
+            elif p and p[0] == 5:
+                # Terminal status OK
+                self._send_response(b"\x1b[0n")
+
+    def _send_response(self, data: bytes):
+        if self.write_response:
+            self.write_response(data)
 
     def _handle_osc(self, char: str):
         if char in ("\x07", "\x9c"):
@@ -177,3 +201,10 @@ class VT100Parser:
             if len(parts) >= 3:
                 url = parts[2]
                 self.screen.current_url = url if url else None
+        # OSC 10 / OSC 11 Color Queries
+        elif payload == "10;?" or payload.startswith("10;?"):
+            fg_hex = f"{DEFAULT_FG[0]:02x}{DEFAULT_FG[0]:02x}/{DEFAULT_FG[1]:02x}{DEFAULT_FG[1]:02x}/{DEFAULT_FG[2]:02x}{DEFAULT_FG[2]:02x}"
+            self._send_response(f"\x1b]10;rgb:{fg_hex}\x1b\\".encode("ascii"))
+        elif payload == "11;?" or payload.startswith("11;?"):
+            bg_hex = f"{DEFAULT_BG[0]:02x}{DEFAULT_BG[0]:02x}/{DEFAULT_BG[1]:02x}{DEFAULT_BG[1]:02x}/{DEFAULT_BG[2]:02x}{DEFAULT_BG[2]:02x}"
+            self._send_response(f"\x1b]11;rgb:{bg_hex}\x1b\\".encode("ascii"))
