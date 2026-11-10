@@ -53,3 +53,22 @@ def test_erase_in_display():
     screen.erase_in_display(2)
     assert screen.grid[0][0].char == " "
     assert screen.grid[0][1].char == " "
+
+
+def test_clear_all_resets_grid_and_scrollback():
+    screen = ScreenBuffer(cols=10, rows=3, max_scrollback=50)
+    screen.put_char("H")
+    screen.put_char("i")
+    screen.scroll_up(2)
+    screen.scroll_view(1)
+    assert len(screen.scrollback) > 0
+    assert screen.scroll_offset > 0
+
+    screen.clear_all()
+    assert len(screen.scrollback) == 0
+    assert screen.scroll_offset == 0
+    assert screen.cursor_x == 0
+    assert screen.cursor_y == 0
+    assert all(c.char == " " for row in screen.grid for c in row)
+    assert len(screen.dirty_lines) == screen.rows
+
