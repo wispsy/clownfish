@@ -1,0 +1,179 @@
+"""VT100, ANSI, and OSC escape sequence parser."""
+
+from collections.abc import Callable
+
+from clownfish.screen import ScreenBuffer
+
+
+class VT100Parser:
+    """State machine parser decoding ANSI/VT100/OSC control streams."""
+
+    STATE_GROUND = 0
+    STATE_ESCAPE = 1
+    STATE_CSI = 2
+    STATE_OSC = 3
+
+    def __init__(
+        self,
+        screen: ScreenBuffer,
+        write_response: Callable[[bytes], None] | None = None,
+    ):
+        self.screen = screen
+        self.write_response = write_response
+        self.state = self.STATE_GROUND
+        self.params: list[int] = []
+        self.current_param = ""
+        self.private_mode = False
+        self.osc_payload = ""
+
+        # Terminal Flags
+        self.application_cursor_keys = False
+        self.bracketed_paste_mode = False
+        self.mouse_tracking = False     # ?1000h (Normal tracking)
+        self.sgr_mouse_mode = False      # ?1006h (SGR decimal format)
+
+    def feed(self, text: str):
+        for char in text:
+            if self.state == self.STATE_GROUND:
+                self._handle_ground(char)
+            elif self.state == self.STATE_ESCAPE:
+                self._handle_escape(char)
+            elif self.state == self.STATE_CSI:
+                self._handle_csi(char)
+            elif self.state == self.STATE_OSC:
+                self._handle_osc(char)
+
+    def _handle_ground(self, char: str):
+        if char == "\x1b":
+            self.state = self.STATE_ESCAPE
+        elif char == "\r":
+            self.screen.cursor_x = 0
+        elif char in ("\n", "\x0b", "\x0c"):
+            self.screen.cursor_y += 1
+            if self.screen.cursor_y > self.screen.scroll_bottom:
+                self.screen.scroll_up(1)
+                self.screen.cursor_y = self.screen.scroll_bottom
+        elif char == "\b":
+            self.screen.cursor_x = max(0, self.screen.cursor_x - 1)
+        elif char == "\t":
+            self.screen.cursor_x = min(self.screen.cols - 1, (self.screen.cursor_x + 8) & ~7)
+        elif ord(char) >= 32:
+            self.screen.put_char(char)
+
+    def _handle_escape(self, char: str):
+        if char == "[":
+            self.state = self.STATE_CSI
+            self.params = []
+            self.current_param = ""
+            self.private_mode = False
+        elif char == "]":
+            self.state = self.STATE_OSC
+            self.osc_payload = ""
+        elif char == "7":
+            self.screen.save_cursor()
+            self.state = self.STATE_GROUND
+        elif char == "8":
+            self.screen.restore_cursor()
+            self.state = self.STATE_GROUND
+        elif char == "M":
+            if self.screen.cursor_y == self.screen.scroll_top:
+                self.screen.scroll_down(1)
+            else:
+                self.screen.cursor_y = max(0, self.screen.cursor_y - 1)
+            self.state = self.STATE_GROUND
+        elif char == "c":
+            self.screen.erase_in_display(2)
+            self.screen.move_cursor(0, 0)
+            self.state = self.STATE_GROUND
+        else:
+            self.state = self.STATE_GROUND
+
+    def _handle_csi(self, char: str):
+        if char == "?":
+            self.private_mode = True
+        elif "0" <= char <= "9":
+            self.current_param += char
+        elif char == ";":
+            self.params.append(int(self.current_param) if self.current_param else 0)
+            self.current_param = ""
+        elif 0x40 <= ord(char) <= 0x7E:
+            if self.current_param:
+                self.params.append(int(self.current_param))
+            self._dispatch_csi(char)
+            self.state = self.STATE_GROUND
+
+    def _dispatch_csi(self, final: str):
+        p = self.params
+        val1 = p[0] if (p and p[0] > 0) else 1
+
+        if self.private_mode:
+            enable = (final == "h")
+            for mode in (p if p else [0]):
+                if mode == 1:
+                    self.application_cursor_keys = enable
+                elif mode == 25:
+                    self.screen.cursor_visible = enable
+                elif mode in (47, 1047, 1049):
+                    if enable:
+                        self.screen.enter_alt_screen()
+                    else:
+                        self.screen.exit_alt_screen()
+                elif mode == 2004:
+                    self.bracketed_paste_mode = enable
+                elif mode == 1000:
+                    self.mouse_tracking = enable
+                elif mode == 1006:
+                    self.sgr_mouse_mode = enable
+            return
+
+        if final == "A":
+            self.screen.cursor_y = max(0, self.screen.cursor_y - val1)
+        elif final == "B":
+            self.screen.cursor_y = min(self.screen.rows - 1, self.screen.cursor_y + val1)
+        elif final == "C":
+            self.screen.cursor_x = min(self.screen.cols - 1, self.screen.cursor_x + val1)
+        elif final == "D":
+            self.screen.cursor_x = max(0, self.screen.cursor_x - val1)
+        elif final == "G":
+            self.screen.cursor_x = min(self.screen.cols - 1, max(0, val1 - 1))
+        elif final == "d":
+            self.screen.cursor_y = min(self.screen.rows - 1, max(0, val1 - 1))
+        elif final in ("H", "f"):
+            row = (p[0] - 1) if (len(p) > 0 and p[0] > 0) else 0
+            col = (p[1] - 1) if (len(p) > 1 and p[1] > 0) else 0
+            self.screen.move_cursor(row, col)
+        elif final == "J":
+            self.screen.erase_in_display(p[0] if p else 0)
+        elif final == "K":
+            self.screen.erase_in_line(p[0] if p else 0)
+        elif final == "@":
+            self.screen.insert_chars(val1)
+        elif final == "P":
+            self.screen.delete_chars(val1)
+        elif final == "m":
+            self.screen.handle_sgr(p)
+        elif final == "r":
+            top = (p[0] - 1) if (len(p) > 0 and p[0] > 0) else 0
+            bottom = (p[1] - 1) if (len(p) > 1 and p[1] > 0) else (self.screen.rows - 1)
+            if 0 <= top < bottom < self.screen.rows:
+                self.screen.scroll_top = top
+                self.screen.scroll_bottom = bottom
+                self.screen.move_cursor(0, 0)
+
+    def _handle_osc(self, char: str):
+        if char in ("\x07", "\x9c"):
+            self._dispatch_osc(self.osc_payload)
+            self.state = self.STATE_GROUND
+        elif char == "\\" and self.osc_payload.endswith("\x1b"):
+            self._dispatch_osc(self.osc_payload[:-1])
+            self.state = self.STATE_GROUND
+        else:
+            self.osc_payload += char
+
+    def _dispatch_osc(self, payload: str):
+        # OSC 8 Hyperlink: 8;params;URL
+        if payload.startswith("8;"):
+            parts = payload.split(";", 2)
+            if len(parts) >= 3:
+                url = parts[2]
+                self.screen.current_url = url if url else None

@@ -1,13 +1,19 @@
 [project]
 name = "clownfish"
 version = "0.1.0"
-description = "Add your description here"
+description = "A modern terminal emulator written in Python and Tkinter"
 readme = "README.md"
 authors = [
     { name = "ellainng", email = "299958882+ellainng@users.noreply.github.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]
 
 [project.scripts]
 clownfish = "clownfish:main"
@@ -15,3 +21,11 @@ clownfish = "clownfish:main"
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
