@@ -3,7 +3,7 @@
 from collections import deque
 from typing import ClassVar
 
-from clownfish.models import DEFAULT_BG, DEFAULT_FG, Cell, Style, char_width
+from clownfish.models import DEFAULT_BG, DEFAULT_FG, Cell, PromptMarker, Style, char_width
 
 
 class ScreenBuffer:
@@ -39,6 +39,7 @@ class ScreenBuffer:
         self._primary_saved_style = Style()
 
         self.grid = self.primary_grid
+        self.prompt_markers: list[PromptMarker] = []
 
     def _blank_row(self) -> list[Cell]:
         return [
@@ -69,6 +70,7 @@ class ScreenBuffer:
             return
         self.is_alt_screen = False
         self.grid = self.primary_grid
+        self.prompt_markers: list[PromptMarker] = []
         self.cursor_x, self.cursor_y = self._primary_saved_cursor
         self.current_style = self._primary_saved_style.copy()
         self.scroll_top = 0
@@ -128,6 +130,7 @@ class ScreenBuffer:
         """Wipes the active grid and completely flushes the scrollback history."""
         self.scrollback.clear()
         self.scroll_offset = 0
+        self.prompt_markers.clear()
         self.grid = [self._blank_row() for _ in range(self.rows)]
         if self.is_alt_screen:
             self.alt_grid = self.grid
@@ -136,6 +139,22 @@ class ScreenBuffer:
         self.cursor_x = 0
         self.cursor_y = 0
         self.mark_all_dirty()
+
+    def mark_prompt_start(self):
+        """Record the start of a semantic shell prompt (OSC 133;A)."""
+        marker = PromptMarker(row=self.cursor_y)
+        self.prompt_markers.append(marker)
+
+    def mark_prompt_end(self):
+        """Record prompt end / user command line start (OSC 133;B)."""
+
+    def mark_command_executed(self):
+        """Record user command execution start (OSC 133;C)."""
+
+    def mark_command_finished(self, exit_code: int | None = None):
+        """Record user command termination with exit status (OSC 133;D)."""
+        if self.prompt_markers:
+            self.prompt_markers[-1].exit_code = exit_code
 
     def move_cursor(self, row: int, col: int):
         self.cursor_y = max(0, min(self.rows - 1, row))

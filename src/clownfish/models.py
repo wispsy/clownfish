@@ -51,6 +51,15 @@ class Cell:
 
 
 @dataclasses.dataclass
+class PromptMarker:
+    """Semantic prompt boundary captured via OSC 133."""
+
+    row: int
+    command: str = ""
+    exit_code: int | None = None
+
+
+@dataclasses.dataclass
 class Selection:
     """Tracks mouse selection coordinates in terminal character space."""
 
