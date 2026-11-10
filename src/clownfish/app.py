@@ -82,6 +82,13 @@ class TkTerminalApp:
             self.root.bind("<Command-v>", self._paste_from_clipboard)
         self.canvas.bind("<Button-2>", lambda e: self._paste_from_clipboard())
 
+        # Clear screen + scrollback shortcuts
+        self.root.bind("<Control-k>", self._on_clear_screen_shortcut)
+        self.root.bind("<Control-K>", self._on_clear_screen_shortcut)
+        if sys.platform == "darwin":
+            self.root.bind("<Command-k>", self._on_clear_screen_shortcut)
+            self.root.bind("<Command-K>", self._on_clear_screen_shortcut)
+
         # Spawn PTY
         self.pid, self.master_fd = pty.fork()
         if self.pid == 0:
@@ -264,6 +271,19 @@ class TkTerminalApp:
             self.root.clipboard_append(selected_text)
             self.root.update()
 
+        return "break"
+
+    def _on_clear_screen_shortcut(self, event: tk.Event | None = None) -> str:
+        # Wipe visual buffer and history
+        self.screen.clear_all()
+        self.canvas.delete("all")
+        self.selection.active = False
+
+        # Send ANSI clear sequence to shell to force a clean redraw of prompt
+        try:
+            os.write(self.master_fd, b"\x1b[2J\x1b[H")
+        except OSError:
+            pass
         return "break"
 
     def _paste_from_clipboard(self, event: tk.Event | None = None) -> str:

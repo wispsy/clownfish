@@ -124,6 +124,19 @@ class ScreenBuffer:
             self.scroll_offset = 0
             self.mark_all_dirty()
 
+    def clear_all(self):
+        """Wipes the active grid and completely flushes the scrollback history."""
+        self.scrollback.clear()
+        self.scroll_offset = 0
+        self.grid = [self._blank_row() for _ in range(self.rows)]
+        if self.is_alt_screen:
+            self.alt_grid = self.grid
+        else:
+            self.primary_grid = self.grid
+        self.cursor_x = 0
+        self.cursor_y = 0
+        self.mark_all_dirty()
+
     def move_cursor(self, row: int, col: int):
         self.cursor_y = max(0, min(self.rows - 1, row))
         self.cursor_x = max(0, min(self.cols - 1, col))
