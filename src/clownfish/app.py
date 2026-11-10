@@ -262,7 +262,7 @@ class TkTerminalApp:
             row_cells = self.screen.get_visible_row(r)
             sc = c1 if r == r1 else 0
             ec = c2 if r == r2 else self.cols - 1
-            line_text = "".join(cell.char for cell in row_cells[sc : ec + 1])
+            line_text = "".join(cell.char for cell in row_cells[sc : ec + 1] if cell.width != 0)
             lines.append(line_text.rstrip())
 
         selected_text = "\n".join(lines)
@@ -448,24 +448,34 @@ class TkTerminalApp:
         col = 0
         while col < self.cols:
             cell = row_cells[col]
+            if cell.width == 0:
+                col += 1
+                continue
+
             st = cell.style
             url = cell.url
             fg = st.bg if st.reverse else st.fg
             bg = st.fg if st.reverse else st.bg
 
-            span_chars = [cell.char]
-            next_col = col + 1
-            while next_col < self.cols:
-                nc = row_cells[next_col]
-                if nc.style == st and nc.url == url:
-                    span_chars.append(nc.char)
-                    next_col += 1
-                else:
-                    break
+            if cell.width == 2:
+                span_width = 2
+                text_str = cell.char
+                next_col = min(self.cols, col + 2)
+            else:
+                span_chars = [cell.char]
+                next_col = col + 1
+                while next_col < self.cols:
+                    nc = row_cells[next_col]
+                    if nc.width == 1 and nc.style == st and nc.url == url:
+                        span_chars.append(nc.char)
+                        next_col += 1
+                    else:
+                        break
+                span_width = next_col - col
+                text_str = "".join(span_chars)
 
             x1 = col * self.cell_w
-            x2 = next_col * self.cell_w
-            text_str = "".join(span_chars)
+            x2 = (col + span_width) * self.cell_w
 
             if bg != DEFAULT_BG:
                 self.canvas.create_rectangle(

@@ -3,7 +3,7 @@
 from collections import deque
 from typing import ClassVar
 
-from clownfish.models import DEFAULT_BG, DEFAULT_FG, Cell, Style
+from clownfish.models import DEFAULT_BG, DEFAULT_FG, Cell, Style, char_width
 
 
 class ScreenBuffer:
@@ -148,20 +148,70 @@ class ScreenBuffer:
         self.cursor_x, self.cursor_y = self.saved_cursor
 
     def put_char(self, char: str):
-        if self.cursor_x >= self.cols:
-            self.cursor_x = 0
-            self.cursor_y += 1
-        if self.cursor_y > self.scroll_bottom:
-            self.scroll_up(1)
-            self.cursor_y = self.scroll_bottom
+        w = char_width(char)
+        if w == 0:
+            # Combining character or zero-width: append to previous cell glyph
+            prev_x = max(0, self.cursor_x - 1)
+            target_cell = self.grid[self.cursor_y][prev_x]
+            if target_cell.width == 0 and prev_x > 0:
+                # If pointing at wide continuation spacer, attach to lead cell
+                target_cell = self.grid[self.cursor_y][prev_x - 1]
+            target_cell.char += char
+            self.dirty_lines.add(self.cursor_y)
+            return
+
+        if w == 2:
+            # If wide char doesn't fit in current row's remaining column, wrap line
+            if self.cursor_x >= self.cols - 1:
+                if self.cursor_x == self.cols - 1:
+                    self.grid[self.cursor_y][self.cursor_x] = Cell(
+                        char=" ",
+                        style=self.current_style.copy(),
+                        url=self.current_url,
+                        width=1,
+                    )
+                self.cursor_x = 0
+                self.cursor_y += 1
+                if self.cursor_y > self.scroll_bottom:
+                    self.scroll_up(1)
+                    self.cursor_y = self.scroll_bottom
+        else:
+            if self.cursor_x >= self.cols:
+                self.cursor_x = 0
+                self.cursor_y += 1
+                if self.cursor_y > self.scroll_bottom:
+                    self.scroll_up(1)
+                    self.cursor_y = self.scroll_bottom
+
+        # If overwriting a spacer cell of a previous wide character, blank out leader
+        if self.grid[self.cursor_y][self.cursor_x].width == 0 and self.cursor_x > 0:
+            self.grid[self.cursor_y][self.cursor_x - 1] = Cell(
+                char=" ",
+                style=self.current_style.copy(),
+                url=self.current_url,
+                width=1,
+            )
 
         self.grid[self.cursor_y][self.cursor_x] = Cell(
             char=char,
             style=self.current_style.copy(),
-            url=self.current_url
+            url=self.current_url,
+            width=w,
         )
         self.dirty_lines.add(self.cursor_y)
-        self.cursor_x += 1
+
+        if w == 2:
+            # Place continuation spacer cell in adjacent column
+            if self.cursor_x + 1 < self.cols:
+                self.grid[self.cursor_y][self.cursor_x + 1] = Cell(
+                    char="",
+                    style=self.current_style.copy(),
+                    url=self.current_url,
+                    width=0,
+                )
+            self.cursor_x = min(self.cols, self.cursor_x + 2)
+        else:
+            self.cursor_x += 1
 
     def erase_in_display(self, mode: int = 0):
         if mode == 0:
