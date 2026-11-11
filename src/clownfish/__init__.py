@@ -3,22 +3,43 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from clownfish.models import Cell, Selection, Style
-from clownfish.parser import VT100Parser
-from clownfish.screen import ScreenBuffer
+from clownfish.config import TerminalConfig
+from clownfish.core.keyboard import encode_key_press, encode_kitty_key
+from clownfish.core.models import (
+    Cell,
+    PromptMarker,
+    Selection,
+    Style,
+    char_width,
+)
+from clownfish.core.parser import VT100Parser
+from clownfish.core.screen import ScreenBuffer
+from clownfish.session.session import TerminalSession
+from clownfish.session.transport import Transport
 from clownfish.syntax import highlight_code, is_syntax_available, print_highlighted
+from clownfish.transports.pty import PTYTransport
+from clownfish.transports.ssh import SSHTransport
 
 if TYPE_CHECKING:
-    from clownfish.app import TkTerminalApp
+    from clownfish.frontends.tkinter.app import TkTerminalApp
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     "Cell",
+    "PTYTransport",
+    "PromptMarker",
+    "SSHTransport",
     "ScreenBuffer",
     "Selection",
     "Style",
+    "TerminalConfig",
+    "TerminalSession",
     "TkTerminalApp",
+    "Transport",
     "VT100Parser",
+    "char_width",
+    "encode_key_press",
+    "encode_kitty_key",
     "highlight_code",
     "is_syntax_available",
     "main",
@@ -28,7 +49,7 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name == "TkTerminalApp":
-        from clownfish.app import TkTerminalApp
+        from clownfish.frontends.tkinter.app import TkTerminalApp
 
         return TkTerminalApp
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -38,7 +59,7 @@ def main() -> None:
     """Launch clownfish terminal emulator."""
     import tkinter as tk
 
-    from clownfish.app import TkTerminalApp
+    from clownfish.frontends.tkinter.app import TkTerminalApp
 
     root = tk.Tk()
     root.title("clownfish")
