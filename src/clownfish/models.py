@@ -24,8 +24,8 @@ def char_width(char: str) -> int:
 
 
 def encode_kitty_key(keysym: str, state: int, char: str = "") -> bytes | None:
-    """Encode key event into Kitty keyboard protocol escape sequence."""
-    # Modifiers: Shift=1, Alt=2, Ctrl=4, Super=8. Modifier parameter = 1 + bitmask.
+    """Encode key event into Kitty/xterm modified keyboard escape sequences."""
+    # Modifiers: Shift=1, Alt=2, Ctrl=4, Super=8. Parameter value = 1 + bitmask.
     mod = 1
     if state & 0x1:  # Shift
         mod += 1
@@ -36,31 +36,41 @@ def encode_kitty_key(keysym: str, state: int, char: str = "") -> bytes | None:
     if state & 0x40 or state & 0x10:  # Super / Command
         mod += 8
 
-    # Functional keys mapping to kitty key codes
-    key_codes = {
+    if mod <= 1:
+        return None
+
+    # Standard xterm/Kitty modified navigation and cursor keys:
+    # Arrow keys use CSI 1;modifier [A-D]
+    # Home/End use CSI 1;modifier [H,F]
+    # PC edit keys use CSI <key-id>;modifier ~
+    nav_keys = {
+        "Up": f"\x1b[1;{mod}A".encode("ascii"),
+        "Down": f"\x1b[1;{mod}B".encode("ascii"),
+        "Right": f"\x1b[1;{mod}C".encode("ascii"),
+        "Left": f"\x1b[1;{mod}D".encode("ascii"),
+        "Home": f"\x1b[1;{mod}H".encode("ascii"),
+        "End": f"\x1b[1;{mod}F".encode("ascii"),
+        "Insert": f"\x1b[2;{mod}~".encode("ascii"),
+        "Delete": f"\x1b[3;{mod}~".encode("ascii"),
+        "Prior": f"\x1b[5;{mod}~".encode("ascii"),  # Page Up
+        "Next": f"\x1b[6;{mod}~".encode("ascii"),   # Page Down
+    }
+    if keysym in nav_keys:
+        return nav_keys[keysym]
+
+    # Functional keys with Kitty CSI u encoding:
+    kitty_u_keys = {
         "Return": 13,
         "Tab": 9,
         "BackSpace": 127,
         "Escape": 27,
-        "Delete": 57376,
-        "Insert": 57377,
-        "Prior": 57378,  # Page Up
-        "Next": 57379,   # Page Down
-        "Up": 57352,
-        "Down": 57353,
-        "Right": 57351,
-        "Left": 57350,
-        "Home": 57358,
-        "End": 57359,
     }
+    if keysym in kitty_u_keys:
+        code = kitty_u_keys[keysym]
+        return f"\x1b[{code};{mod}u".encode("ascii")
 
-    if keysym in key_codes:
-        code = key_codes[keysym]
-        if mod > 1:
-            return f"\x1b[{code};{mod}u".encode("ascii")
-        return None
-
-    if len(char) == 1 and mod > 1:
+    # Regular character keys with modifier (e.g. Ctrl+C -> 99;5u)
+    if len(char) == 1:
         code = ord(char.lower() if (mod & 4) else char)
         return f"\x1b[{code};{mod}u".encode("ascii")
 

@@ -1,7 +1,12 @@
 """Unit tests for Clownfish syntax highlighting using escape-colors."""
 
 from clownfish.screen import ScreenBuffer
-from clownfish.syntax import highlight_code, print_highlighted
+from clownfish.syntax import highlight_code, is_syntax_available, print_highlighted
+
+
+def test_is_syntax_available():
+    assert is_syntax_available() is True
+
 
 
 def test_highlight_code_basic():

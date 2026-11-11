@@ -3,10 +3,18 @@
 from collections.abc import Iterable
 from typing import Any
 
-import escape_colors.syntax as ec_syntax
-
 from clownfish.parser import VT100Parser
 from clownfish.screen import ScreenBuffer
+
+try:
+    import escape_colors.syntax as ec_syntax
+except ImportError:
+    ec_syntax = None  # type: ignore
+
+
+def is_syntax_available() -> bool:
+    """Return True if escape-colors syntax module is installed and available."""
+    return ec_syntax is not None
 
 
 def highlight_code(
@@ -15,6 +23,10 @@ def highlight_code(
     theme: str = "default",
 ) -> str:
     """Highlight source code into ANSI escape sequence formatted text using escape-colors."""
+    if ec_syntax is None:
+        raise ImportError(
+            "Syntax highlighting requires 'escape-colors'. Install with `pip install clownfish[syntax]`."
+        )
     return ec_syntax.highlight(source_or_tokens, language=language, theme=theme)
 
 

@@ -106,3 +106,22 @@ def test_csi_3_j_erases_saved_lines_only():
     assert screen.grid[0][1].char == "B"
 
 
+def test_screen_autowrap_pending_state():
+    screen = ScreenBuffer(cols=5, rows=3)
+    for c in "HELLO":
+        screen.put_char(c)
+
+    # After filling the line, cursor should stay on last column (col 4) with wrap_pending
+    assert screen.cursor_x == 4
+    assert screen.cursor_y == 0
+    assert screen.wrap_pending is True
+
+    # Writing next character causes deferred wrap to row 1, col 1
+    screen.put_char("!")
+    assert screen.cursor_y == 1
+    assert screen.cursor_x == 1
+    assert screen.wrap_pending is False
+    assert screen.grid[1][0].char == "!"
+
+
+

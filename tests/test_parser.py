@@ -121,3 +121,23 @@ def test_parser_csi_3_j():
     parser.feed("\x1b[3J")
     assert len(screen.scrollback) == 0
 
+
+def test_parser_sgr_semicolon_rgb_with_subsequent_attribute():
+    screen = ScreenBuffer(cols=20, rows=10)
+    parser = VT100Parser(screen)
+
+    # Standard semicolon RGB followed by bold: 38;2;0;255;0;1m
+    parser.feed("\x1b[38;2;0;255;0;1mGreenBold\x1b[0m")
+    cell = screen.grid[0][0]
+    assert cell.char == "G"
+    assert cell.style.fg == (0, 255, 0)
+    assert cell.style.bold is True
+
+    # Colon-separated RGB followed by bold: 38:2::0:255:0;1m
+    screen.move_cursor(1, 0)
+    parser.feed("\x1b[38:2::0;255;0;1mAltGreenBold\x1b[0m")
+    cell2 = screen.grid[1][0]
+    assert cell2.char == "A"
+    assert cell2.style.bold is True
+
+

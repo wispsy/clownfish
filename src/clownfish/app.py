@@ -111,10 +111,21 @@ class TkTerminalApp:
         self._render_tick()
 
     def _write_master(self, data: bytes):
-        try:
-            os.write(self.master_fd, data)
-        except OSError:
-            pass
+        total_written = 0
+        while total_written < len(data):
+            try:
+                written = os.write(self.master_fd, data[total_written:])
+                if written == 0:
+                    break
+                total_written += written
+            except (BlockingIOError, InterruptedError):
+                import select
+
+                _, wlist, _ = select.select([], [self.master_fd], [], 0.05)
+                if not wlist:
+                    break
+            except OSError:
+                break
 
     @staticmethod
     def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
@@ -144,10 +155,7 @@ class TkTerminalApp:
             cx = 32 + min(223, col + 1)
             cy = 32 + min(223, row + 1)
             packet = bytes([0x1b, ord("["), ord("M"), cb, cx, cy])
-        try:
-            os.write(self.master_fd, packet)
-        except OSError:
-            pass
+        self._write_master(packet)
 
     # --- Mouse Event Handlers ---
 
@@ -314,10 +322,7 @@ class TkTerminalApp:
         else:
             formatted_stream = raw_bytes
 
-        try:
-            os.write(self.master_fd, formatted_stream)
-        except OSError:
-            pass
+        self._write_master(formatted_stream)
 
         return "break"
 
@@ -340,7 +345,7 @@ class TkTerminalApp:
         if self.parser.kitty_keyboard_flags & 1:
             kitty_encoded = encode_kitty_key(event.keysym, event.state, event.char)
             if kitty_encoded is not None:
-                os.write(self.master_fd, kitty_encoded)
+                self._write_master(kitty_encoded)
                 return "break"
 
         app_cursor = self.parser.application_cursor_keys
@@ -366,14 +371,14 @@ class TkTerminalApp:
         }
 
         if event.keysym in arrow_map:
-            os.write(self.master_fd, arrow_map[event.keysym])
+            self._write_master(arrow_map[event.keysym])
         elif event.keysym in keymap:
-            os.write(self.master_fd, keymap[event.keysym])
+            self._write_master(keymap[event.keysym])
         elif (event.state & 0x4) and event.keysym.isalpha() and len(event.keysym) == 1:
             ctrl_byte = bytes([ord(event.keysym.lower()) - 96])
-            os.write(self.master_fd, ctrl_byte)
+            self._write_master(ctrl_byte)
         elif event.char:
-            os.write(self.master_fd, event.char.encode("utf-8"))
+            self._write_master(event.char.encode("utf-8"))
 
         return "break"
 

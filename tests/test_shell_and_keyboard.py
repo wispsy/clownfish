@@ -123,3 +123,24 @@ def test_kitty_keyboard_key_encoding():
     # Control + key character (e.g. 'c', state 0x4)
     assert encode_kitty_key("c", 0x4, "c") == b"\x1b[99;5u"
 
+    # Navigation / Arrow keys use standard modified CSI forms:
+    # Ctrl+Up -> CSI 1;5A
+    assert encode_kitty_key("Up", 0x4) == b"\x1b[1;5A"
+    # Shift+Down -> CSI 1;2B
+    assert encode_kitty_key("Down", 0x1) == b"\x1b[1;2B"
+    # Alt+Right -> CSI 1;3C
+    assert encode_kitty_key("Right", 0x8) == b"\x1b[1;3C"
+    # Ctrl+Left -> CSI 1;5D
+    assert encode_kitty_key("Left", 0x4) == b"\x1b[1;5D"
+    # Shift+Home -> CSI 1;2H
+    assert encode_kitty_key("Home", 0x1) == b"\x1b[1;2H"
+    # Ctrl+End -> CSI 1;5F
+    assert encode_kitty_key("End", 0x4) == b"\x1b[1;5F"
+    # Ctrl+Delete -> CSI 3;5~
+    assert encode_kitty_key("Delete", 0x4) == b"\x1b[3;5~"
+    # Shift+PageUp -> CSI 5;2~
+    assert encode_kitty_key("Prior", 0x1) == b"\x1b[5;2~"
+    # Ctrl+PageDown -> CSI 6;5~
+    assert encode_kitty_key("Next", 0x4) == b"\x1b[6;5~"
+
+

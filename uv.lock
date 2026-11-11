@@ -4,25 +4,25 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "clownfish"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
-dependencies = [
-    { name = "escape-colors" },
-]
 
 [package.optional-dependencies]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+syntax = [
+    { name = "escape-colors" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "escape-colors", specifier = "==0.2.0" },
+    { name = "escape-colors", marker = "extra == 'syntax'", specifier = "==0.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["syntax", "dev"]
 
 [[package]]
 name = "colorama"
