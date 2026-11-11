@@ -1,7 +1,7 @@
 # Clownfish 🐟
 
 [![CI](https://github.com/wispsy/clownfish/actions/workflows/ci.yml/badge.svg)](https://github.com/wispsy/clownfish/actions/workflows/ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A lightweight, modern terminal emulator written in Python and Tkinter, featuring TrueColor rendering, full POSIX PTY bridge, mouse reporting, Unicode wide character support, device attribute queries, and shell integration.
@@ -25,7 +25,7 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Installation & Running
 
-Ensure you have Python 3.10+ and [uv](https://docs.astral.sh/uv/) installed.
+Ensure you have Python 3.14+ and [uv](https://docs.astral.sh/uv/) installed.
 
 ### Clone the Repository
 ```bash
@@ -78,26 +78,35 @@ uv run ruff check .
 clownfish/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml             # GitHub Actions CI workflow
+│       └── ci.yml                 # GitHub Actions CI workflow (Ubuntu & macOS)
 ├── docs/
-│   ├── architecture.md        # Architecture overview & data flow
+│   ├── architecture.md            # Architecture overview & data flow
 │   ├── modern-terminal-gap-analysis.md # Modern terminal specifications
-│   └── shortcuts.md           # Keybinding reference
+│   └── shortcuts.md               # Keybinding reference
 ├── src/
 │   └── clownfish/
-│       ├── __init__.py        # Package exports & entrypoint
-│       ├── app.py             # Tkinter frontend & event dispatch
-│       ├── clownfish.png      # Application icon
-│       ├── main.py            # CLI script runner
-│       ├── models.py          # Data models (Cell, Style, Selection)
-│       ├── parser.py          # VT100 / ANSI / OSC parser
-│       └── screen.py          # Grid & scrollback screen buffer
-├── tests/
-│   ├── test_device_attributes.py # DA1/DA2/DSR/OSC tests
-│   ├── test_models.py         # Models & styling tests
-│   ├── test_parser.py         # Escape sequence parser tests
-│   ├── test_screen.py         # Screen buffer & clear_all tests
-│   ├── test_shell_and_keyboard.py # OSC 133 & Kitty protocol tests
+│       ├── __init__.py            # Public API exports & launch function
+│       ├── __main__.py            # Module entrypoint (python -m clownfish)
+│       ├── config.py              # Configuration dataclasses (TerminalConfig)
+│       ├── syntax.py              # Syntax highlighting integration
+│       ├── core/                  # Core terminal engine
+│       │   ├── models.py          # Data models (Cell, Style, Selection, PromptMarker)
+│       │   ├── keyboard.py        # Keystroke encoding & Kitty keyboard protocol
+│       │   ├── parser.py          # VT100 / ANSI / OSC escape sequence parser
+│       │   └── screen.py          # Screen buffer, dual grid, autowrap & scrollback
+│       ├── session/               # Terminal session layer
+│       │   ├── session.py         # TerminalSession lifecycle manager
+│       │   └── transport.py       # Abstract Transport base class
+│       ├── transports/            # Pluggable I/O transports
+│       │   ├── pty.py             # POSIX PTYTransport with write buffering
+│       │   └── ssh.py             # SSHTransport via OpenSSH PTY bridge
+│       └── frontends/
+│           └── tkinter/           # Tkinter desktop frontend
+│               ├── app.py         # TkTerminalApp main window
+│               ├── renderer.py    # Canvas text & selection renderer
+│               └── input.py       # Pointer & keyboard event translator
+└── tests/                         # Comprehensive unit & integration test suite
+```
 │   └── test_unicode.py        # Wide characters & CJK tests
 ├── pyproject.toml             # Project metadata & build settings
 └── README.md

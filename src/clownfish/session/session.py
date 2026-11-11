@@ -3,13 +3,38 @@
 from __future__ import annotations
 
 import codecs
+import queue
 from collections.abc import Callable
+from typing import Any
 
 from clownfish.core.keyboard import encode_key_press
 from clownfish.core.parser import VT100Parser
 from clownfish.core.screen import ScreenBuffer
 from clownfish.session.transport import Transport
-from clownfish.transports.pty import PTYTransport
+
+TransportFactory = Callable[[int, int], Transport]
+_default_transport_factory: TransportFactory | None = None
+
+
+def set_default_transport_factory(factory: TransportFactory | None) -> None:
+    """Register a custom global factory function for creating default transports."""
+    global _default_transport_factory
+    _default_transport_factory = factory
+
+
+def get_default_transport(cols: int, rows: int) -> Transport:
+    """Create a default transport for the current platform."""
+    if _default_transport_factory is not None:
+        return _default_transport_factory(cols, rows)
+    try:
+        from clownfish.transports.pty import PTYTransport
+
+        return PTYTransport(cols=cols, rows=rows)
+    except (ImportError, OSError) as err:
+        raise RuntimeError(
+            "No default PTY transport available on this platform. "
+            "Please provide an explicit transport instance."
+        ) from err
 
 
 class TerminalSession:
@@ -40,11 +65,34 @@ class TerminalSession:
         self.parser = VT100Parser(self.screen, write_response=self._on_parser_response)
         self.utf8_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
-        self.transport = transport or PTYTransport(cols=cols, rows=rows)
+        self.transport = transport if transport is not None else get_default_transport(cols, rows)
         self.transport.set_callbacks(
             on_data=self._on_transport_data,
             on_close=self._on_transport_close,
         )
+
+        self._event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._event_notifier: Callable[[], None] | None = None
+
+    def set_event_notifier(self, notifier: Callable[[], None] | None) -> None:
+        """Register a callback to wake the main UI thread when new transport events arrive."""
+        self._event_notifier = notifier
+
+    def drain_events(self) -> None:
+        """Drain and process all pending transport events on the caller's thread."""
+        while not self._event_queue.empty():
+            try:
+                event_type, payload = self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            if event_type == "data":
+                text = self.utf8_decoder.decode(payload, final=False)
+                self.parser.feed(text)
+                if self.on_output:
+                    self.on_output()
+            elif event_type == "close" and self.on_close:
+                self.on_close()
 
     def start(self) -> None:
         """Start the transport layer."""
@@ -59,16 +107,22 @@ class TerminalSession:
         self.transport.write(data)
 
     def _on_transport_data(self, raw_bytes: bytes) -> None:
-        """Process incoming raw bytes from the transport."""
-        text = self.utf8_decoder.decode(raw_bytes, final=False)
-        self.parser.feed(text)
-        if self.on_output:
-            self.on_output()
+        """Enqueue incoming raw bytes from the transport."""
+        self._event_queue.put(("data", raw_bytes))
+        if self._event_notifier is not None:
+            self._event_notifier()
+        else:
+            # When no UI event loop notifier is attached (e.g. headless scripts / tests),
+            # auto-drain immediately.
+            self.drain_events()
 
     def _on_transport_close(self) -> None:
-        """Handle transport disconnection."""
-        if self.on_close:
-            self.on_close()
+        """Enqueue transport disconnection."""
+        self._event_queue.put(("close", None))
+        if self._event_notifier is not None:
+            self._event_notifier()
+        else:
+            self.drain_events()
 
     def feed_text(self, text: str) -> None:
         """Directly feed text to the session's VT100 parser."""

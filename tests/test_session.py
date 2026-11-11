@@ -201,10 +201,46 @@ def test_ssh_transport_command_builder() -> None:
     ]
 
 
+def test_session_event_queue_and_notifier() -> None:
+    transport = MemoryTransport()
+    notified_count = 0
+
+    def notifier() -> None:
+        nonlocal notified_count
+        notified_count += 1
+
+    session = TerminalSession(transport=transport)
+    session.set_event_notifier(notifier)
+    session.start()
+
+    transport.simulate_incoming(b"Queued data")
+    assert notified_count == 1
+    # Before draining, screen row is blank
+    assert "".join(c.char for c in session.screen.get_visible_row(0)).strip() == ""
+
+    session.drain_events()
+    assert "".join(c.char for c in session.screen.get_visible_row(0)).strip() == "Queued data"
+
+
+def test_default_transport_factory() -> None:
+    from clownfish.session.session import (
+        get_default_transport,
+        set_default_transport_factory,
+    )
+
+    custom_transport = MemoryTransport()
+    set_default_transport_factory(lambda c, r: custom_transport)
+    try:
+        t = get_default_transport(80, 24)
+        assert t is custom_transport
+    finally:
+        set_default_transport_factory(None)
+
+
 def test_public_exports() -> None:
     assert hasattr(clownfish, "TerminalSession")
     assert hasattr(clownfish, "Transport")
     assert hasattr(clownfish, "PTYTransport")
     assert hasattr(clownfish, "SSHTransport")
     assert hasattr(clownfish, "TerminalConfig")
-    assert clownfish.__version__ == "0.3.0"
+    assert clownfish.__version__ == "0.3.1"
