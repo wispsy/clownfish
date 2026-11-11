@@ -13,6 +13,10 @@ class VT100Parser:
     STATE_ESCAPE = 1
     STATE_CSI = 2
     STATE_OSC = 3
+    STATE_STRING = 4  # DCS, APC, PM, SOS
+
+    MAX_OSC_LENGTH: int = 8192
+    MAX_STRING_LENGTH: int = 8192
 
     def __init__(
         self,
@@ -27,7 +31,9 @@ class VT100Parser:
         self.private_mode = False
         self.secondary_da = False
         self.csi_prefix = ""
+        self.intermediate_bytes = ""
         self.osc_payload = ""
+        self.string_payload = ""
 
         # Terminal Flags
         self.application_cursor_keys = False
@@ -47,6 +53,8 @@ class VT100Parser:
                 self._handle_csi(char)
             elif self.state == self.STATE_OSC:
                 self._handle_osc(char)
+            elif self.state == self.STATE_STRING:
+                self._handle_string(char)
 
     def _handle_ground(self, char: str):
         if char == "\x1b":
@@ -73,9 +81,17 @@ class VT100Parser:
             self.private_mode = False
             self.secondary_da = False
             self.csi_prefix = ""
+            self.intermediate_bytes = ""
         elif char == "]":
             self.state = self.STATE_OSC
             self.osc_payload = ""
+        elif char in ("P", "_", "^", "X"):
+            # P: DCS (Device Control String)
+            # _: APC (Application Program Command)
+            # ^: PM (Privacy Message)
+            # X: SOS (Start of String)
+            self.state = self.STATE_STRING
+            self.string_payload = ""
         elif char == "7":
             self.screen.save_cursor()
             self.state = self.STATE_GROUND
@@ -95,8 +111,15 @@ class VT100Parser:
         else:
             self.state = self.STATE_GROUND
 
+    def _handle_string(self, char: str):
+        if char in ("\x07", "\x9c") or char == "\\" and self.string_payload.endswith("\x1b"):
+            self.state = self.STATE_GROUND
+        else:
+            if len(self.string_payload) < self.MAX_STRING_LENGTH:
+                self.string_payload += char
+
     def _handle_csi(self, char: str):
-        if char in ("?", ">", "=", "<"):
+        if not self.params and not self.current_param and char in ("?", ">", "=", "<"):
             self.csi_prefix = char
             if char == "?":
                 self.private_mode = True
@@ -104,9 +127,12 @@ class VT100Parser:
                 self.secondary_da = True
         elif "0" <= char <= "9":
             self.current_param += char
-        elif char == ";":
+        elif char in (";", ":"):
             self.params.append(int(self.current_param) if self.current_param else 0)
             self.current_param = ""
+        elif 0x20 <= ord(char) <= 0x2F:
+            # Intermediate byte (ECMA-48 range 0x20-0x2F)
+            self.intermediate_bytes += char
         elif 0x40 <= ord(char) <= 0x7E:
             if self.current_param:
                 self.params.append(int(self.current_param))
@@ -218,7 +244,8 @@ class VT100Parser:
             self._dispatch_osc(self.osc_payload[:-1])
             self.state = self.STATE_GROUND
         else:
-            self.osc_payload += char
+            if len(self.osc_payload) < self.MAX_OSC_LENGTH:
+                self.osc_payload += char
 
     def _dispatch_osc(self, payload: str):
         # OSC 8 Hyperlink: 8;params;URL
