@@ -16,6 +16,9 @@ class ScreenBuffer:
         (59, 142, 234),   (214, 112, 214),  (41, 184, 219),   (255, 255, 255),
     )
 
+    # Standard xterm 6x6x6 color cube component levels
+    CUBE_STEPS: ClassVar[tuple[int, ...]] = (0, 95, 135, 175, 215, 255)
+
     def __init__(self, cols: int = 80, rows: int = 24, max_scrollback: int = 10_000):
         self.cols = cols
         self.rows = rows
@@ -32,6 +35,7 @@ class ScreenBuffer:
         self.primary_grid: list[list[Cell]] = [self._blank_row() for _ in range(rows)]
         self.scrollback: deque[list[Cell]] = deque(maxlen=max_scrollback)
         self.scroll_offset = 0
+        self.total_lines_scrolled = 0
 
         self.alt_grid: list[list[Cell]] = [self._blank_row() for _ in range(rows)]
         self.is_alt_screen = False
@@ -70,7 +74,7 @@ class ScreenBuffer:
             return
         self.is_alt_screen = False
         self.grid = self.primary_grid
-        self.prompt_markers: list[PromptMarker] = []
+        # Note: prompt_markers are preserved across alternate screen switches
         self.cursor_x, self.cursor_y = self._primary_saved_cursor
         self.current_style = self._primary_saved_style.copy()
         self.scroll_top = 0
@@ -82,6 +86,7 @@ class ScreenBuffer:
             popped = self.grid.pop(self.scroll_top)
             if not self.is_alt_screen and self.scroll_top == 0 and self.scroll_bottom == self.rows - 1:
                 self.scrollback.append(popped)
+                self.total_lines_scrolled += 1
             self.grid.insert(self.scroll_bottom, self._blank_row())
 
         if not self.is_alt_screen and self.scroll_offset > 0:
@@ -131,6 +136,7 @@ class ScreenBuffer:
         self.scrollback.clear()
         self.scroll_offset = 0
         self.prompt_markers.clear()
+        self.total_lines_scrolled = 0
         self.grid = [self._blank_row() for _ in range(self.rows)]
         if self.is_alt_screen:
             self.alt_grid = self.grid
@@ -142,7 +148,8 @@ class ScreenBuffer:
 
     def mark_prompt_start(self):
         """Record the start of a semantic shell prompt (OSC 133;A)."""
-        marker = PromptMarker(row=self.cursor_y)
+        abs_row = self.total_lines_scrolled + self.cursor_y
+        marker = PromptMarker(row=abs_row)
         self.prompt_markers.append(marker)
 
     def mark_prompt_end(self):
@@ -155,6 +162,35 @@ class ScreenBuffer:
         """Record user command termination with exit status (OSC 133;D)."""
         if self.prompt_markers:
             self.prompt_markers[-1].exit_code = exit_code
+
+    def get_prompt_jump_offset(self, direction: int) -> int | None:
+        """Find the scrollback offset to jump to previous (direction < 0) or next (direction > 0) prompt."""
+        if not self.prompt_markers:
+            return None
+
+        current_view_top = self.total_lines_scrolled - self.scroll_offset
+
+        if direction < 0:
+            candidates = [m.row for m in self.prompt_markers if m.row < current_view_top]
+            if not candidates:
+                earliest = self.prompt_markers[0].row
+                if earliest < current_view_top:
+                    target_row = earliest
+                else:
+                    return None
+            else:
+                target_row = max(candidates)
+        else:
+            candidates = [m.row for m in self.prompt_markers if m.row > current_view_top]
+            if not candidates:
+                if self.scroll_offset > 0:
+                    return 0
+                return None
+            else:
+                target_row = min(candidates)
+
+        target_offset = self.total_lines_scrolled - target_row
+        return max(0, min(len(self.scrollback), target_offset))
 
     def move_cursor(self, row: int, col: int):
         self.cursor_y = max(0, min(self.rows - 1, row))
@@ -243,12 +279,18 @@ class ScreenBuffer:
                 self.grid[y] = self._blank_row()
                 self.dirty_lines.add(y)
             self.erase_in_line(1)
-        elif mode in (2, 3):
+        elif mode == 2:
             self.grid = [self._blank_row() for _ in range(self.rows)]
             if self.is_alt_screen:
                 self.alt_grid = self.grid
             else:
                 self.primary_grid = self.grid
+            self.mark_all_dirty()
+        elif mode == 3:
+            # CSI 3 J: Erase Saved Lines (xterm extension)
+            # Clears scrollback history without clearing the visible screen
+            self.scrollback.clear()
+            self.scroll_offset = 0
             self.mark_all_dirty()
 
     def erase_in_line(self, mode: int = 0):
@@ -290,6 +332,7 @@ class ScreenBuffer:
                         popped = grid.pop(0)
                         if push_to_history:
                             self.scrollback.append(popped)
+                            self.total_lines_scrolled += 1
             elif new_rows > self.rows:
                 needed = new_rows - self.rows
                 for _ in range(needed):
@@ -365,9 +408,16 @@ class ScreenBuffer:
     def _parse_extended_color(self, sub: list[int]) -> tuple[tuple[int, int, int] | None, int]:
         if not sub:
             return None, 0
-        if sub[0] == 2 and len(sub) >= 4:
-            return (sub[1], sub[2], sub[3]), 4
+        if sub[0] == 2:
+            # TrueColor RGB:
+            # Standard semicolon notation: 38;2;r;g;b (len >= 4)
+            # Colon/ISO notation: 38:2::r:g:b (sub[1] == 0 color space id, len >= 5)
+            if len(sub) >= 5 and sub[1] == 0:
+                return (sub[2], sub[3], sub[4]), 5
+            elif len(sub) >= 4:
+                return (sub[1], sub[2], sub[3]), 4
         elif sub[0] == 5 and len(sub) >= 2:
+            # 256-color palette index: 38;5;idx or 38:5:idx
             return self._index_to_rgb(sub[1]), 2
         return None, 0
 
@@ -377,7 +427,10 @@ class ScreenBuffer:
             return cls.ANSI_16[idx]
         elif idx <= 231:
             idx -= 16
-            return ((idx // 36) % 6 * 51, (idx // 6) % 6 * 51, (idx % 6) * 51)
+            r = cls.CUBE_STEPS[(idx // 36) % 6]
+            g = cls.CUBE_STEPS[(idx // 6) % 6]
+            b = cls.CUBE_STEPS[idx % 6]
+            return (r, g, b)
         elif idx <= 255:
             g = (idx - 232) * 10 + 8
             return (g, g, g)

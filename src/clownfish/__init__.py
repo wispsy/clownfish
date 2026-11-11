@@ -10,7 +10,7 @@ from clownfish.screen import ScreenBuffer
 if TYPE_CHECKING:
     from clownfish.app import TkTerminalApp
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "Cell",
     "ScreenBuffer",

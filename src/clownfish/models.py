@@ -23,6 +23,50 @@ def char_width(char: str) -> int:
     return 1
 
 
+def encode_kitty_key(keysym: str, state: int, char: str = "") -> bytes | None:
+    """Encode key event into Kitty keyboard protocol escape sequence."""
+    # Modifiers: Shift=1, Alt=2, Ctrl=4, Super=8. Modifier parameter = 1 + bitmask.
+    mod = 1
+    if state & 0x1:  # Shift
+        mod += 1
+    if state & 0x8 or state & 0x80:  # Alt / Option (Meta)
+        mod += 2
+    if state & 0x4:  # Control
+        mod += 4
+    if state & 0x40 or state & 0x10:  # Super / Command
+        mod += 8
+
+    # Functional keys mapping to kitty key codes
+    key_codes = {
+        "Return": 13,
+        "Tab": 9,
+        "BackSpace": 127,
+        "Escape": 27,
+        "Delete": 57376,
+        "Insert": 57377,
+        "Prior": 57378,  # Page Up
+        "Next": 57379,   # Page Down
+        "Up": 57352,
+        "Down": 57353,
+        "Right": 57351,
+        "Left": 57350,
+        "Home": 57358,
+        "End": 57359,
+    }
+
+    if keysym in key_codes:
+        code = key_codes[keysym]
+        if mod > 1:
+            return f"\x1b[{code};{mod}u".encode("ascii")
+        return None
+
+    if len(char) == 1 and mod > 1:
+        code = ord(char.lower() if (mod & 4) else char)
+        return f"\x1b[{code};{mod}u".encode("ascii")
+
+    return None
+
+
 @dataclasses.dataclass(slots=True)
 class Style:
     """Styling attributes for a terminal cell."""
@@ -52,7 +96,7 @@ class Cell:
 
 @dataclasses.dataclass
 class PromptMarker:
-    """Semantic prompt boundary captured via OSC 133."""
+    """Semantic prompt boundary captured via OSC 133 with absolute row tracking."""
 
     row: int
     command: str = ""

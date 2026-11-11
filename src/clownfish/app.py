@@ -12,7 +12,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
 
-from clownfish.models import DEFAULT_BG, WORD_DELIMITERS, Selection
+from clownfish.models import DEFAULT_BG, WORD_DELIMITERS, Selection, encode_kitty_key
 from clownfish.parser import VT100Parser
 from clownfish.screen import ScreenBuffer
 
@@ -83,11 +83,12 @@ class TkTerminalApp:
         self.canvas.bind("<Button-2>", lambda e: self._paste_from_clipboard())
 
         # Clear screen + scrollback shortcuts
-        self.root.bind("<Control-k>", self._on_clear_screen_shortcut)
-        self.root.bind("<Control-K>", self._on_clear_screen_shortcut)
         if sys.platform == "darwin":
             self.root.bind("<Command-k>", self._on_clear_screen_shortcut)
             self.root.bind("<Command-K>", self._on_clear_screen_shortcut)
+        else:
+            self.root.bind("<Control-Shift-k>", self._on_clear_screen_shortcut)
+            self.root.bind("<Control-Shift-K>", self._on_clear_screen_shortcut)
 
         # Semantic prompt jumping (OSC 133)
         self.canvas.bind("<Command-Up>", lambda e: self._jump_prompt(-1))
@@ -284,18 +285,15 @@ class TkTerminalApp:
         self.screen.clear_all()
         self.canvas.delete("all")
         self.selection.active = False
-
-        # Send ANSI clear sequence to shell to force a clean redraw of prompt
-        try:
-            os.write(self.master_fd, b"\x1b[2J\x1b[H")
-        except OSError:
-            pass
         return "break"
 
     def _jump_prompt(self, direction: int) -> str:
-        if not self.screen.prompt_markers:
-            return "break"
-        self.screen.scroll_view(direction * 5)
+        new_offset = self.screen.get_prompt_jump_offset(direction)
+        if new_offset is not None:
+            self.screen.scroll_offset = new_offset
+            self.screen.mark_all_dirty()
+            self.canvas.delete("selection_box")
+            self.selection.active = False
         return "break"
 
     def _paste_from_clipboard(self, event: tk.Event | None = None) -> str:
@@ -338,10 +336,12 @@ class TkTerminalApp:
             self.screen.scroll_view(-(self.rows // 2))
             return "break"
 
-        # Kitty keyboard protocol for modified Return
-        if (self.parser.kitty_keyboard_flags & 1) and event.keysym == "Return" and (event.state & 0x1):
-            os.write(self.master_fd, b"\x1b[13;2u")
-            return "break"
+        # Kitty keyboard protocol for modified keys
+        if self.parser.kitty_keyboard_flags & 1:
+            kitty_encoded = encode_kitty_key(event.keysym, event.state, event.char)
+            if kitty_encoded is not None:
+                os.write(self.master_fd, kitty_encoded)
+                return "break"
 
         app_cursor = self.parser.application_cursor_keys
         arrow_prefix = b"\x1bO" if app_cursor else b"\x1b["
