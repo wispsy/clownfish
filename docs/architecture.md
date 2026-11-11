@@ -1,70 +1,86 @@
 # Clownfish Architecture
 
-Clownfish is a modular terminal emulator written in Python and Tkinter. This document describes the internal subsystems, data flow, and concurrency model.
+Clownfish is a modular terminal emulator written in Python. This document describes the internal subsystems, data flow, concurrency model, and session architecture.
 
 ```mermaid
 flowchart TD
-    subgraph Host Subprocess
-        Shell["Interactive Shell / Subprocess (/bin/zsh, bash, etc.)"]
+    subgraph Host / Remote
+        Shell["Interactive Shell / Subprocess (/bin/zsh, bash, OpenSSH)"]
     end
 
-    subgraph PTY Layer
-        MasterFD["Master PTY (os.read / os.write)"]
-        SlaveFD["Slave PTY (os.environ, TIOCSWINSZ)"]
+    subgraph Transport Layer
+        Transport["Transport (ABC)"]
+        PTY["PTYTransport (Lossless Outgoing Queue + Nonblocking Reader Thread)"]
+        SSH["SSHTransport (Interactive OpenSSH Bridge)"]
+        Transport --> PTY
+        Transport --> SSH
+    end
+
+    subgraph Session Layer
+        Session["TerminalSession (Thread-Safe Event Queue + Lifecyle Manager)"]
+        UTF8["UTF-8 Incremental Decoder"]
+        Session --> UTF8
     end
 
     subgraph Core Engine
-        Parser["VT100Parser (State Machine)"]
+        Parser["VT100Parser (State Machine, OSC 133, Kitty KB)"]
         Screen["ScreenBuffer (Primary + Alt Grids, Scrollback deque)"]
+        Keyboard["Keyboard Encoder (Standard CSI + Kitty Protocol)"]
         Models["Data Models (Cell, Style, Selection, PromptMarker)"]
     end
 
-    subgraph Frontend
-        App["TkTerminalApp (Tkinter Event Loop)"]
-        Canvas["tk.Canvas (Row Text & Color Spans)"]
+    subgraph Frontend - Tkinter
+        App["TkTerminalApp (Window & Session Controller)"]
+        Renderer["TkCanvasRenderer (60 FPS Canvas Batching)"]
+        InputHandler["TkInputHandler (Pointer & Key Translation)"]
     end
 
-    Shell <--> SlaveFD
-    SlaveFD <--> MasterFD
-    MasterFD -->|Raw Bytes UTF-8| Parser
+    Shell <--> PTY
+    PTY -->|Raw Bytes via Thread-Safe Event Queue| Session
+    Session --> Parser
     Parser --> Screen
-    Parser -->|Queries CPR/DA1/DA2| MasterFD
-    App -->|Render Tick 60 FPS| Canvas
-    Screen --> App
-    App -->|Key / Mouse / Clear ANSI| MasterFD
+    Parser -->|Response stream| PTY
+    App -->|Main Thread Drain & Render| Renderer
+    Renderer --> Screen
+    InputHandler -->|Keystrokes / Clicks| Session
+    Session -->|Enqueued Writes| PTY
 ```
 
 ---
 
 ## Subsystems
 
-### 1. Data Models (`clownfish.models`)
-- **`Style`**: Stores TrueColor 24-bit RGB tuples for foreground and background, plus text attributes (`bold`, `italic`, `underline`, `reverse`).
-- **`Cell`**: Individual grid cell containing `char: str`, `style: Style`, `url: str | None` (OSC 8 hyperlink), and `width: int` (1 for normal, 2 for wide glyph leader, 0 for wide continuation spacer).
-- **`Selection`**: Coordinates of active visual selection, normalized across row and column bounds.
-- **`PromptMarker`**: Semantic prompt boundary tracking line numbers, commands, and exit codes for OSC 133 shell integration.
-- **`char_width(char)`**: Utility utilizing `unicodedata.east_asian_width` and Unicode combining marks to identify 0, 1, or 2 column widths.
+### 1. Core Engine (`clownfish.core`)
+- **`models.py`**:
+  - `Style`: 24-bit RGB TrueColor fg/bg tuples, plus attributes (`bold`, `italic`, `underline`, `reverse`).
+  - `Cell`: Individual grid cell (`char`, `style`, `url`, `width`). Supports East Asian Wide characters (width=2) with continuation spacers (width=0).
+  - `Selection`: Normalized character cell coordinates for active mouse selection.
+  - `PromptMarker`: Semantic prompt tracking for OSC 133 shell integration.
+- **`keyboard.py`**:
+  - Keystroke translation to standard ANSI/xterm sequences and Kitty keyboard protocol (`CSI u` and modified cursor navigation).
+- **`screen.py`**:
+  - `ScreenBuffer`: Dual-grid architecture (`primary_grid` and `alt_grid`), pending autowrap delay (`wrap_pending`), dirty row tracking, prompt marker preservation, and high-performance scrollback (`collections.deque`).
+- **`parser.py`**:
+  - `VT100Parser`: Fast state machine parser handling ANSI colors, colon-delimited SGR subparameters, OSC 8 hyperlinks, OSC 133 shell integration, device attributes (DA1, DA2, DSR, color queries), and bounded payloads with robust ST (`ESC \`) termination detection.
 
-### 2. Screen Buffer (`clownfish.screen`)
-- **Primary & Alt Grids**: Two 2D grids of `Cell` objects (`primary_grid` and `alt_grid`). Interactive CLI programs (e.g. `vim`, `htop`, `less`) toggle alt-screen mode (`CSI ? 1049 h / l`).
-- **Scrollback History**: High-performance `collections.deque(maxlen=10_000)` storing displaced lines as the cursor scrolls downward.
-- **Scroll Regions**: Support for top/bottom scrolling margins (`CSI r`) used in split-pane text editors.
-- **Dirty Line Tracking**: Set of modified row indices to minimize redundant canvas redraw calls during high-throughput output.
-- **`clear_all()`**: Purges the scrollback history, resets scroll offset to 0, blanks the active grid, homes the cursor, and marks all rows dirty.
+### 2. Session Layer (`clownfish.session`)
+- **`TerminalSession`**:
+  - Owns `ScreenBuffer`, `VT100Parser`, input encoding, and `Transport`.
+  - Independent of any GUI or platform: can be run headless, in test environments, in background automations, or attached to desktop frontends.
+  - Thread-Safe Event Queue: Background transport threads deliver incoming byte chunks and disconnect notifications into a safe `queue.Queue`. The UI event loop drains these on the main thread, guaranteeing that screen buffer mutations and widget operations are strictly thread-safe.
+  - Default Transport Factory: Decoupled via `set_default_transport_factory` / `get_default_transport` so embedded and non-POSIX environments can load sessions without requiring desktop POSIX PTY modules.
 
-### 3. Escape Sequence Parser (`clownfish.parser`)
-- **State Machine**: Ground -> Escape -> CSI -> OSC transitions.
-- **CSI Processor**: Dispatches cursor movement, text insertion/deletion, erasing, scrolling regions, SGR color handling (16-color, 256-color palette, and 24-bit TrueColor), and mouse tracking modes (`?1000h`, `?1006h`).
-- **Protocol Identification & Queries**:
-  - Responds to DA1 (`CSI c`) with VT220 status `\x1b[?62;c`.
-  - Responds to DA2 (`CSI >c`) with VT220/xterm status `\x1b[>1;10;0c`.
-  - Responds to DSR (`CSI 6n`) with cursor position `\x1b[{row};{col}R`.
-  - Responds to OSC 10/11 color queries with configured theme RGB values.
-- **Kitty Keyboard Protocol**: Handles queries (`CSI ? u`), flag settings (`CSI = u`), stack pushing (`CSI > u`), and stack popping (`CSI < u`).
-- **OSC 133 Shell Integration**: Dispatches semantic prompt markers (`A`, `B`, `C`, `D`).
+### 3. Transport Layer (`clownfish.transports`)
+- **`Transport` (ABC)**:
+  - Base interface defining `start()`, `write()`, `resize()`, `close()`, `is_alive()`, and callback registration.
+- **`PTYTransport`**:
+  - Local pseudo-terminal transport using `pty.fork()` and `termios.TIOCSWINSZ`.
+  - Lossless outgoing write queue: Asynchronously drains unwritten bytes when the PTY file descriptor becomes writable without blocking caller threads or dropping bytes on `EAGAIN`.
+  - Background reader thread multiplexes incoming PTY reads and outgoing write queue flushes via `select.select()`.
+- **`SSHTransport`**:
+  - Interactive OpenSSH client transport allocating a remote pseudo-terminal (`ssh -tt`).
 
-### 4. Application Frontend (`clownfish.app`)
-- **PTY Management**: Forks child process with `pty.fork()`, configures `TERM=xterm-256color` and `COLORTERM=truecolor`, and binds non-blocking I/O to Tk's file event handler (`tk.createfilehandler`).
-- **Window Resizing**: Listens to `<Configure>` events, debounces resize calculations, resizes the screen buffer, and propagates window geometry to the kernel via `ioctl(TIOCSWINSZ)`.
-- **Render Pipeline**: A 60 FPS tick (`root.after(16, self._render_tick)`) redraws dirty rows, batches identical-styled adjacent single-width cells into contiguous canvas strings, and draws selection overlays.
-- **Keyboard & Mouse Dispatch**: Handles full clipboard integration (copy on selection, bracketed paste mode), mouse tracking (SGR decimal format), and keyboard shortcut translation.
+### 4. Desktop Frontend (`clownfish.frontends.tkinter`)
+- **`TkCanvasRenderer`**: Canvas rendering pipeline with font metrics, dirty row caching, contiguous cell span batching, and selection highlighting.
+- **`TkInputHandler`**: Translates mouse selection (single, double word, triple line), hyperlink clicks, mouse wheel scrolling, and keyboard events into session actions.
+- **`TkTerminalApp`**: Main Tkinter window coordinating session lifecycle, window resizing, shortcuts (`Cmd+K`, `Cmd+C`, `Cmd+V`, `Cmd+Up/Down`), and main thread event draining.

@@ -23,7 +23,7 @@ from clownfish.transports.ssh import SSHTransport
 if TYPE_CHECKING:
     from clownfish.frontends.tkinter.app import TkTerminalApp
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = [
     "Cell",
     "PTYTransport",

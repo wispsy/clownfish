@@ -35,6 +35,7 @@ class VT100Parser:
         self.intermediate_bytes = ""
         self.osc_payload = ""
         self.string_payload = ""
+        self.escape_in_string = False
 
         # Terminal Flags
         self.application_cursor_keys = False
@@ -91,9 +92,11 @@ class VT100Parser:
         elif char == "]":
             self.state = self.STATE_OSC
             self.osc_payload = ""
+            self.escape_in_string = False
         elif char in ("P", "_", "^", "X"):
             self.state = self.STATE_STRING
             self.string_payload = ""
+            self.escape_in_string = False
         elif char == "7":
             self.screen.save_cursor()
             self.state = self.STATE_GROUND
@@ -115,8 +118,19 @@ class VT100Parser:
             self.state = self.STATE_GROUND
 
     def _handle_string(self, char: str):
-        if char in ("\x07", "\x9c") or (char == "\\" and self.string_payload.endswith("\x1b")):
+        if char in ("\x07", "\x9c"):
             self.state = self.STATE_GROUND
+            self.escape_in_string = False
+        elif self.escape_in_string:
+            self.escape_in_string = False
+            if char == "\\":
+                self.state = self.STATE_GROUND
+            elif char == "\x1b":
+                self.escape_in_string = True
+            elif len(self.string_payload) < self.MAX_STRING_LENGTH:
+                self.string_payload += "\x1b" + char
+        elif char == "\x1b":
+            self.escape_in_string = True
         else:
             if len(self.string_payload) < self.MAX_STRING_LENGTH:
                 self.string_payload += char
@@ -252,9 +266,18 @@ class VT100Parser:
         if char in ("\x07", "\x9c"):
             self._dispatch_osc(self.osc_payload)
             self.state = self.STATE_GROUND
-        elif char == "\\" and self.osc_payload.endswith("\x1b"):
-            self._dispatch_osc(self.osc_payload[:-1])
-            self.state = self.STATE_GROUND
+            self.escape_in_string = False
+        elif self.escape_in_string:
+            self.escape_in_string = False
+            if char == "\\":
+                self._dispatch_osc(self.osc_payload)
+                self.state = self.STATE_GROUND
+            elif char == "\x1b":
+                self.escape_in_string = True
+            elif len(self.osc_payload) < self.MAX_OSC_LENGTH:
+                self.osc_payload += "\x1b" + char
+        elif char == "\x1b":
+            self.escape_in_string = True
         else:
             if len(self.osc_payload) < self.MAX_OSC_LENGTH:
                 self.osc_payload += char

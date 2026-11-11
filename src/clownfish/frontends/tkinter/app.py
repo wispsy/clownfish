@@ -37,6 +37,7 @@ class TkTerminalApp:
         )
         self.session.on_title_changed = self._on_title_changed
         self.session.on_close = self._on_session_close
+        self.session.set_event_notifier(self._on_session_event)
 
         # Compatibility proxies
         self.screen = self.session.screen
@@ -218,7 +219,17 @@ class TkTerminalApp:
         self.canvas.delete("all")
         self.screen.mark_all_dirty()
 
+    def _on_session_event(self) -> None:
+        try:
+            self.root.after_idle(self._drain_session_events)
+        except tk.TclError:
+            pass
+
+    def _drain_session_events(self) -> None:
+        self.session.drain_events()
+
     def _render_tick(self) -> None:
+        self.session.drain_events()
         self.renderer.render(self.screen, self.cols, self.rows)
         try:
             self.root.after(16, self._render_tick)

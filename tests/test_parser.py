@@ -141,3 +141,20 @@ def test_parser_sgr_semicolon_rgb_with_subsequent_attribute():
     assert cell2.style.bold is True
 
 
+def test_parser_oversized_string_and_osc_st_termination():
+    screen = ScreenBuffer(cols=40, rows=10)
+    parser = VT100Parser(screen)
+
+    # DCS/string with 10,000 chars followed by ST (\x1b\) then text
+    parser.feed("\x1bP" + ("X" * 10000) + "\x1b\\AfterDCS")
+    assert parser.state == VT100Parser.STATE_GROUND
+    assert "".join(c.char for c in screen.grid[0][:8]) == "AfterDCS"
+
+    # OSC with 10,000 chars followed by ST (\x1b\) then text
+    screen.move_cursor(1, 0)
+    parser.feed("\x1b]" + ("Y" * 10000) + "\x1b\\AfterOSC")
+    assert parser.state == VT100Parser.STATE_GROUND
+    assert "".join(c.char for c in screen.grid[1][:8]) == "AfterOSC"
+
+
+

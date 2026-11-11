@@ -10,6 +10,7 @@ import signal
 import struct
 import termios
 import threading
+from collections import deque
 from collections.abc import Callable
 
 from clownfish.session.transport import Transport
@@ -39,6 +40,8 @@ class PTYTransport(Transport):
         self.master_fd: int | None = None
         self._running = False
         self._reader_thread: threading.Thread | None = None
+        self._write_queue: deque[bytes] = deque()
+        self._write_lock = threading.Lock()
 
     def start(self) -> None:
         """Fork PTY and spawn process and background reader."""
@@ -82,17 +85,41 @@ class PTYTransport(Transport):
         self._reader_thread.start()
 
     def _reader_loop(self) -> None:
-        """Background loop reading bytes from the master PTY."""
+        """Background loop multiplexing reads and buffered writes to the master PTY."""
         while self._running and self.master_fd is not None:
             try:
-                rlist, _, _ = select.select([self.master_fd], [], [], 0.05)
-                if not rlist:
-                    continue
-                raw_bytes = os.read(self.master_fd, 65536)
-                if not raw_bytes:
+                fd = self.master_fd
+                if fd is None:
                     break
-                if self._on_data:
-                    self._on_data(raw_bytes)
+
+                with self._write_lock:
+                    has_writes = bool(self._write_queue)
+
+                wlist_in = [fd] if has_writes else []
+                rlist, wlist, _ = select.select([fd], wlist_in, [], 0.05)
+
+                # Process pending writes if descriptor is writable
+                if wlist and self.master_fd is not None:
+                    with self._write_lock:
+                        if self._write_queue:
+                            chunk = self._write_queue.popleft()
+                            try:
+                                written = os.write(self.master_fd, chunk)
+                                if written < len(chunk):
+                                    self._write_queue.appendleft(chunk[written:])
+                            except (BlockingIOError, InterruptedError):
+                                self._write_queue.appendleft(chunk)
+                            except OSError:
+                                break
+
+                # Process incoming reads
+                if rlist and self.master_fd is not None:
+                    raw_bytes = os.read(self.master_fd, 65536)
+                    if not raw_bytes:
+                        break
+                    if self._on_data:
+                        self._on_data(raw_bytes)
+
             except (BlockingIOError, InterruptedError):
                 continue
             except OSError:
@@ -103,23 +130,11 @@ class PTYTransport(Transport):
             self._on_close()
 
     def write(self, data: bytes) -> None:
-        """Write bytes to the master PTY descriptor with retry on EAGAIN."""
+        """Enqueue bytes for lossless asynchronous writing to the master PTY."""
         if not self._running or self.master_fd is None or not data:
             return
-
-        total_written = 0
-        while total_written < len(data) and self._running and self.master_fd is not None:
-            try:
-                written = os.write(self.master_fd, data[total_written:])
-                if written == 0:
-                    break
-                total_written += written
-            except (BlockingIOError, InterruptedError):
-                _, wlist, _ = select.select([], [self.master_fd], [], 0.05)
-                if not wlist:
-                    break
-            except OSError:
-                break
+        with self._write_lock:
+            self._write_queue.append(data)
 
     def resize(self, cols: int, rows: int) -> None:
         """Update PTY window size."""
@@ -128,15 +143,17 @@ class PTYTransport(Transport):
         if self.master_fd is None:
             return
         try:
-            # cell size estimated at 8x16 px for window size structure
             winsize = struct.pack("HHHH", rows, cols, cols * 8, rows * 16)
             fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
         except OSError:
             pass
 
     def close(self) -> None:
-        """Terminate the PTY and reap the child process."""
+        """Terminate the PTY, clear write queue, and reap the child process."""
         self._running = False
+        with self._write_lock:
+            self._write_queue.clear()
+
         fd = self.master_fd
         pid = self.pid
         self.master_fd = None
