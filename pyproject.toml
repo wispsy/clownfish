@@ -6,8 +6,10 @@ readme = "README.md"
 authors = [
     { name = "ellainng", email = "299958882+ellainng@users.noreply.github.com" }
 ]
-requires-python = ">=3.10"
-dependencies = []
+requires-python = ">=3.14"
+dependencies = [
+    "escape-colors==0.2.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -28,4 +30,4 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py314"

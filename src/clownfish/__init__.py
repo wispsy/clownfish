@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from clownfish.models import Cell, Selection, Style
 from clownfish.parser import VT100Parser
 from clownfish.screen import ScreenBuffer
+from clownfish.syntax import highlight_code, print_highlighted
 
 if TYPE_CHECKING:
     from clownfish.app import TkTerminalApp
@@ -18,7 +19,9 @@ __all__ = [
     "Style",
     "TkTerminalApp",
     "VT100Parser",
+    "highlight_code",
     "main",
+    "print_highlighted",
 ]
 
 
