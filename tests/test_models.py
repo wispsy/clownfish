@@ -47,13 +47,21 @@ def test_selection_normalization_and_empty():
 
 
 def test_clownfish_module_attributes():
-    import clownfish
-    from clownfish.app import TkTerminalApp
-
-    assert clownfish.TkTerminalApp is TkTerminalApp
-
     import pytest
+
+    import clownfish
 
     with pytest.raises(AttributeError):
         _ = clownfish.non_existent_attribute
+
+    try:
+        import _tkinter  # noqa: F401
+
+        from clownfish.app import TkTerminalApp
+
+        assert clownfish.TkTerminalApp is TkTerminalApp
+    except (ImportError, ModuleNotFoundError):
+        with pytest.raises((ImportError, ModuleNotFoundError)):
+            _ = clownfish.TkTerminalApp
+
 
