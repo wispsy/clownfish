@@ -8,6 +8,7 @@ import tkinter.font as tkfont
 from clownfish.config import TerminalConfig
 from clownfish.core.models import DEFAULT_BG, Selection
 from clownfish.core.screen import ScreenBuffer
+from clownfish.core.search import SearchMatch
 
 
 class TkCanvasRenderer:
@@ -68,6 +69,48 @@ class TkCanvasRenderer:
                 x1, y1, x2, y2,
                 fill=self.config.selection_color, outline="", stipple="gray50", tags="selection_box"
             )
+
+        self.canvas.tag_raise("cursor")
+
+    def draw_search_matches(
+        self,
+        matches: list[SearchMatch],
+        active_match: SearchMatch | None,
+        screen: ScreenBuffer,
+        cols: int,
+        rows: int,
+    ) -> None:
+        """Draw highlight boxes on search match occurrences visible in viewport."""
+        self.canvas.delete("search_highlight")
+        if not matches:
+            return
+
+        sb_len = len(screen.scrollback)
+        top_visible_absolute = sb_len - screen.scroll_offset
+
+        for m in matches:
+            canvas_row = m.absolute_row - top_visible_absolute
+            if 0 <= canvas_row < rows:
+                sc = max(0, min(cols - 1, m.start_col))
+                ec = max(0, min(cols - 1, m.end_col - 1))
+                x1 = sc * self.cell_w
+                y1 = canvas_row * self.cell_h
+                x2 = (ec + 1) * self.cell_w
+                y2 = (canvas_row + 1) * self.cell_h
+
+                is_active = m == active_match
+                color = "#ff9900" if is_active else self.config.search_bg
+                stipple = "gray25" if not is_active else ""
+                self.canvas.create_rectangle(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    fill=color,
+                    outline="#ffffff" if is_active else "",
+                    stipple=stipple,
+                    tags="search_highlight",
+                )
 
         self.canvas.tag_raise("cursor")
 
