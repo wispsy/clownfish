@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING, Any
 from clownfish.models import Cell, Selection, Style
 from clownfish.parser import VT100Parser
 from clownfish.screen import ScreenBuffer
-from clownfish.syntax import highlight_code, print_highlighted
+from clownfish.syntax import highlight_code, is_syntax_available, print_highlighted
 
 if TYPE_CHECKING:
     from clownfish.app import TkTerminalApp
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "Cell",
     "ScreenBuffer",
@@ -20,6 +20,7 @@ __all__ = [
     "TkTerminalApp",
     "VT100Parser",
     "highlight_code",
+    "is_syntax_available",
     "main",
     "print_highlighted",
 ]

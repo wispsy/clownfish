@@ -24,6 +24,7 @@ class ScreenBuffer:
         self.rows = rows
         self.cursor_x = 0
         self.cursor_y = 0
+        self.wrap_pending = False
         self.cursor_visible = True
         self.saved_cursor = (0, 0)
         self.current_style = Style()
@@ -64,6 +65,7 @@ class ScreenBuffer:
         self.scroll_offset = 0
         self.cursor_x = 0
         self.cursor_y = 0
+        self.wrap_pending = False
         self.scroll_top = 0
         self.scroll_bottom = self.rows - 1
         self.erase_in_display(2)
@@ -77,6 +79,7 @@ class ScreenBuffer:
         # Note: prompt_markers are preserved across alternate screen switches
         self.cursor_x, self.cursor_y = self._primary_saved_cursor
         self.current_style = self._primary_saved_style.copy()
+        self.wrap_pending = False
         self.scroll_top = 0
         self.scroll_bottom = self.rows - 1
         self.mark_all_dirty()
@@ -91,6 +94,11 @@ class ScreenBuffer:
 
         if not self.is_alt_screen and self.scroll_offset > 0:
             self.scroll_offset = min(len(self.scrollback), self.scroll_offset + count)
+
+        # Prune prompt markers older than scrollback history retention
+        if len(self.prompt_markers) > 500:
+            min_retained = self.total_lines_scrolled - (self.scrollback.maxlen or 10_000)
+            self.prompt_markers = [m for m in self.prompt_markers if m.row >= min_retained]
 
         self.mark_all_dirty()
 
@@ -137,6 +145,7 @@ class ScreenBuffer:
         self.scroll_offset = 0
         self.prompt_markers.clear()
         self.total_lines_scrolled = 0
+        self.wrap_pending = False
         self.grid = [self._blank_row() for _ in range(self.rows)]
         if self.is_alt_screen:
             self.alt_grid = self.grid
@@ -195,48 +204,50 @@ class ScreenBuffer:
     def move_cursor(self, row: int, col: int):
         self.cursor_y = max(0, min(self.rows - 1, row))
         self.cursor_x = max(0, min(self.cols - 1, col))
+        self.wrap_pending = False
 
     def save_cursor(self):
         self.saved_cursor = (self.cursor_x, self.cursor_y)
 
     def restore_cursor(self):
         self.cursor_x, self.cursor_y = self.saved_cursor
+        self.wrap_pending = False
 
     def put_char(self, char: str):
         w = char_width(char)
         if w == 0:
-            # Combining character or zero-width: append to previous cell glyph
+            # Combining character or zero-width: attach to previous cell
             prev_x = max(0, self.cursor_x - 1)
             target_cell = self.grid[self.cursor_y][prev_x]
             if target_cell.width == 0 and prev_x > 0:
-                # If pointing at wide continuation spacer, attach to lead cell
                 target_cell = self.grid[self.cursor_y][prev_x - 1]
             target_cell.char += char
             self.dirty_lines.add(self.cursor_y)
             return
 
-        if w == 2:
-            # If wide char doesn't fit in current row's remaining column, wrap line
-            if self.cursor_x >= self.cols - 1:
-                if self.cursor_x == self.cols - 1:
-                    self.grid[self.cursor_y][self.cursor_x] = Cell(
-                        char=" ",
-                        style=self.current_style.copy(),
-                        url=self.current_url,
-                        width=1,
-                    )
-                self.cursor_x = 0
-                self.cursor_y += 1
-                if self.cursor_y > self.scroll_bottom:
-                    self.scroll_up(1)
-                    self.cursor_y = self.scroll_bottom
-        else:
-            if self.cursor_x >= self.cols:
-                self.cursor_x = 0
-                self.cursor_y += 1
-                if self.cursor_y > self.scroll_bottom:
-                    self.scroll_up(1)
-                    self.cursor_y = self.scroll_bottom
+        # Handle pending autowrap delay when writing the next printable character
+        if self.wrap_pending:
+            self.cursor_x = 0
+            self.cursor_y += 1
+            if self.cursor_y > self.scroll_bottom:
+                self.scroll_up(1)
+                self.cursor_y = self.scroll_bottom
+            self.wrap_pending = False
+
+        if w == 2 and self.cursor_x >= self.cols - 1:
+            # Wide glyph cannot fit in final single column, wrap immediately
+            if self.cursor_x == self.cols - 1:
+                self.grid[self.cursor_y][self.cursor_x] = Cell(
+                    char=" ",
+                    style=self.current_style.copy(),
+                    url=self.current_url,
+                    width=1,
+                )
+            self.cursor_x = 0
+            self.cursor_y += 1
+            if self.cursor_y > self.scroll_bottom:
+                self.scroll_up(1)
+                self.cursor_y = self.scroll_bottom
 
         # If overwriting a spacer cell of a previous wide character, blank out leader
         if self.grid[self.cursor_y][self.cursor_x].width == 0 and self.cursor_x > 0:
@@ -256,7 +267,6 @@ class ScreenBuffer:
         self.dirty_lines.add(self.cursor_y)
 
         if w == 2:
-            # Place continuation spacer cell in adjacent column
             if self.cursor_x + 1 < self.cols:
                 self.grid[self.cursor_y][self.cursor_x + 1] = Cell(
                     char="",
@@ -264,11 +274,19 @@ class ScreenBuffer:
                     url=self.current_url,
                     width=0,
                 )
-            self.cursor_x = min(self.cols, self.cursor_x + 2)
+            if self.cursor_x + 2 >= self.cols:
+                self.cursor_x = self.cols - 1
+                self.wrap_pending = True
+            else:
+                self.cursor_x += 2
         else:
-            self.cursor_x += 1
+            if self.cursor_x == self.cols - 1:
+                self.wrap_pending = True
+            else:
+                self.cursor_x += 1
 
     def erase_in_display(self, mode: int = 0):
+        self.wrap_pending = False
         if mode == 0:
             self.erase_in_line(0)
             for y in range(self.cursor_y + 1, self.rows):
@@ -288,12 +306,12 @@ class ScreenBuffer:
             self.mark_all_dirty()
         elif mode == 3:
             # CSI 3 J: Erase Saved Lines (xterm extension)
-            # Clears scrollback history without clearing the visible screen
             self.scrollback.clear()
             self.scroll_offset = 0
             self.mark_all_dirty()
 
     def erase_in_line(self, mode: int = 0):
+        self.wrap_pending = False
         y = self.cursor_y
         if mode == 0:
             for x in range(self.cursor_x, self.cols):
@@ -306,6 +324,7 @@ class ScreenBuffer:
         self.dirty_lines.add(y)
 
     def insert_chars(self, count: int):
+        self.wrap_pending = False
         y, x = self.cursor_y, self.cursor_x
         for _ in range(count):
             self.grid[y].insert(x, Cell(style=self.current_style.copy(), url=self.current_url))
@@ -313,6 +332,7 @@ class ScreenBuffer:
         self.dirty_lines.add(y)
 
     def delete_chars(self, count: int):
+        self.wrap_pending = False
         y, x = self.cursor_y, self.cursor_x
         for _ in range(count):
             if x < len(self.grid[y]):
@@ -323,6 +343,8 @@ class ScreenBuffer:
     def resize(self, new_cols: int, new_rows: int):
         if new_cols == self.cols and new_rows == self.rows:
             return
+
+        self.wrap_pending = False
 
         def _resize_target(grid: list[list[Cell]], push_to_history: bool = False):
             if new_rows < self.rows:
@@ -359,12 +381,38 @@ class ScreenBuffer:
         self.cursor_y = max(0, min(self.rows - 1, self.cursor_y))
         self.mark_all_dirty()
 
-    def handle_sgr(self, params: list[int]):
-        if not params:
-            params = [0]
+    def handle_sgr(self, param_groups: list[list[int]]):
+        if not param_groups:
+            param_groups = [[0]]
         i = 0
-        while i < len(params):
-            p = params[i]
+        while i < len(param_groups):
+            group = param_groups[i]
+            if len(group) > 1:
+                # Colon-separated subparameter format
+                cmd = group[0]
+                if cmd in (38, 48):
+                    color = None
+                    if group[1] == 2:
+                        # TrueColor subparams: 38:2::r:g:b or 38:2:cs:r:g:b or 38:2:r:g:b
+                        if len(group) >= 6 and group[2] == 0:
+                            color = (group[3], group[4], group[5])
+                        elif len(group) >= 5:
+                            color = (group[2], group[3], group[4])
+                    elif group[1] == 5 and len(group) >= 3:
+                        # 256 indexed: 38:5:idx
+                        color = self._index_to_rgb(group[2])
+                    if color:
+                        if cmd == 38:
+                            self.current_style.fg = color
+                        else:
+                            self.current_style.bg = color
+                elif cmd == 4:
+                    self.current_style.underline = (group[1] != 0)
+                i += 1
+                continue
+
+            # Standard semicolon-separated parameter
+            p = group[0]
             if p == 0:
                 self.current_style = Style()
             elif p == 1:
@@ -396,30 +444,23 @@ class ScreenBuffer:
             elif 100 <= p <= 107:
                 self.current_style.bg = self.ANSI_16[p - 100 + 8]
             elif p in (38, 48):
-                color, consumed = self._parse_extended_color(params[i + 1 :])
-                if color:
+                # Standard semicolon-separated extended color:
+                # 38;2;r;g;b (consumes next 4) or 38;5;idx (consumes next 2)
+                if i + 4 < len(param_groups) and param_groups[i + 1][0] == 2:
+                    color = (param_groups[i + 2][0], param_groups[i + 3][0], param_groups[i + 4][0])
                     if p == 38:
                         self.current_style.fg = color
                     else:
                         self.current_style.bg = color
-                i += consumed
+                    i += 4
+                elif i + 2 < len(param_groups) and param_groups[i + 1][0] == 5:
+                    color = self._index_to_rgb(param_groups[i + 2][0])
+                    if p == 38:
+                        self.current_style.fg = color
+                    else:
+                        self.current_style.bg = color
+                    i += 2
             i += 1
-
-    def _parse_extended_color(self, sub: list[int]) -> tuple[tuple[int, int, int] | None, int]:
-        if not sub:
-            return None, 0
-        if sub[0] == 2:
-            # TrueColor RGB:
-            # Standard semicolon notation: 38;2;r;g;b (len >= 4)
-            # Colon/ISO notation: 38:2::r:g:b (sub[1] == 0 color space id, len >= 5)
-            if len(sub) >= 5 and sub[1] == 0:
-                return (sub[2], sub[3], sub[4]), 5
-            elif len(sub) >= 4:
-                return (sub[1], sub[2], sub[3]), 4
-        elif sub[0] == 5 and len(sub) >= 2:
-            # 256-color palette index: 38;5;idx or 38:5:idx
-            return self._index_to_rgb(sub[1]), 2
-        return None, 0
 
     @classmethod
     def _index_to_rgb(cls, idx: int) -> tuple[int, int, int]:

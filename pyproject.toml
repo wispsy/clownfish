@@ -1,17 +1,18 @@
 [project]
 name = "clownfish"
-version = "0.2.0"
+version = "0.2.1"
 description = "A modern terminal emulator written in Python and Tkinter"
 readme = "README.md"
 authors = [
     { name = "ellainng", email = "299958882+ellainng@users.noreply.github.com" }
 ]
 requires-python = ">=3.14"
-dependencies = [
-    "escape-colors==0.2.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
+syntax = [
+    "escape-colors==0.2.0",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.4.0",
