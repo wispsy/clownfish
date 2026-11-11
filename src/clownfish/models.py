@@ -78,7 +78,7 @@ class Style:
     underline: bool = False
     reverse: bool = False
 
-    def copy(self) -> "Style":
+    def copy(self) -> Style:
         return Style(
             self.fg, self.bg, self.bold, self.italic, self.underline, self.reverse
         )
