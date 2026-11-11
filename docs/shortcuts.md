@@ -4,11 +4,43 @@ This guide covers all key combinations and pointer interactions supported in Clo
 
 ---
 
+## Tabs & Session Management
+
+| Shortcut (macOS) | Shortcut (Linux / Windows) | Action |
+| :--- | :--- | :--- |
+| `Cmd + T` | `Ctrl + Shift + T` | **New Tab**: Open a new terminal tab and switch to it. |
+| `Cmd + W` | `Ctrl + Shift + W` | **Close**: Close active pane (or tab if single pane). |
+| `Ctrl + Tab` | `Ctrl + Tab` | **Next Tab**: Cycle forward to next tab. |
+| `Ctrl + Shift + Tab` | `Ctrl + Shift + Tab` | **Previous Tab**: Cycle backward to previous tab. |
+| `Cmd + 1` .. `Cmd + 9` | `Alt + 1` .. `Alt + 9` | **Switch Tab**: Jump directly to tab N. |
+
+---
+
+## Split Panes
+
+| Shortcut (macOS) | Shortcut (Linux / Windows) | Action |
+| :--- | :--- | :--- |
+| `Cmd + D` | `Ctrl + Shift + D` | **Split Vertical**: Split current pane top-and-bottom. |
+| `Cmd + Shift + D` | `Ctrl + Shift + Alt + D` | **Split Horizontal**: Split current pane side-by-side. |
+
+---
+
+## In-Buffer Search
+
+| Shortcut (macOS) | Shortcut (Linux / Windows) | Action |
+| :--- | :--- | :--- |
+| `Cmd + F` | `Ctrl + Shift + F` | **Find**: Open / toggle in-buffer search overlay. |
+| `Enter` | `Enter` | Jump to next search match. |
+| `Shift + Enter` | `Shift + Enter` | Jump to previous search match. |
+| `Escape` | `Escape` | Dismiss search bar and clear match highlights. |
+
+---
+
 ## Screen Management & Reset
 
 | Shortcut (macOS) | Shortcut (Linux / Windows) | Action |
 | :--- | :--- | :--- |
-| `Cmd + K` | `Ctrl + K` | **Full Screen & Scrollback Clear**: Wipes the visible screen, purges the entire 10,000-line scrollback history, resets scroll offset to 0, moves cursor home, and forces a shell prompt redraw (`\x1b[2J\x1b[H`). |
+| `Cmd + K` | `Ctrl + Shift + K` | **Full Screen & Scrollback Clear**: Wipes visible screen and all 10,000 lines of scrollback buffer. |
 
 ---
 

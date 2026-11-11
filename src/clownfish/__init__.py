@@ -14,6 +14,7 @@ from clownfish.core.models import (
 )
 from clownfish.core.parser import VT100Parser
 from clownfish.core.screen import ScreenBuffer
+from clownfish.core.search import SearchMatch, SearchState, search_screen
 from clownfish.session.session import TerminalSession
 from clownfish.session.transport import Transport
 from clownfish.syntax import highlight_code, is_syntax_available, print_highlighted
@@ -22,17 +23,25 @@ from clownfish.transports.ssh import SSHTransport
 
 if TYPE_CHECKING:
     from clownfish.frontends.tkinter.app import TkTerminalApp
+    from clownfish.frontends.tkinter.pane import TerminalPane
+    from clownfish.frontends.tkinter.split import SplitView
+    from clownfish.frontends.tkinter.tabs import TabbedTerminalView
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 __all__ = [
     "Cell",
     "PTYTransport",
     "PromptMarker",
     "SSHTransport",
     "ScreenBuffer",
+    "SearchMatch",
+    "SearchState",
     "Selection",
+    "SplitView",
     "Style",
+    "TabbedTerminalView",
     "TerminalConfig",
+    "TerminalPane",
     "TerminalSession",
     "TkTerminalApp",
     "Transport",
@@ -44,6 +53,7 @@ __all__ = [
     "is_syntax_available",
     "main",
     "print_highlighted",
+    "search_screen",
 ]
 
 
@@ -52,6 +62,18 @@ def __getattr__(name: str) -> Any:
         from clownfish.frontends.tkinter.app import TkTerminalApp
 
         return TkTerminalApp
+    if name == "TerminalPane":
+        from clownfish.frontends.tkinter.pane import TerminalPane
+
+        return TerminalPane
+    if name == "SplitView":
+        from clownfish.frontends.tkinter.split import SplitView
+
+        return SplitView
+    if name == "TabbedTerminalView":
+        from clownfish.frontends.tkinter.tabs import TabbedTerminalView
+
+        return TabbedTerminalView
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

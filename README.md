@@ -10,6 +10,10 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **Multi-Tab Terminal Sessions**: Manage multiple independent terminal sessions with tab switching shortcuts (`Cmd+T`, `Cmd+W`, `Cmd+1..9`, `Ctrl+Tab`).
+- **Split Panes**: Divide any tab vertically (`Cmd+D`) or horizontally (`Cmd+Shift+D`) with native resizable sash dividers.
+- **In-Buffer Search**: Interactive search bar (`Cmd+F`) across active terminal screen and scrollback history with match highlighting and cycling.
+- **User Preferences**: Persistent configuration in `~/.config/clownfish/config.json`.
 - **POSIX PTY Engine**: Runs native shells (`/bin/zsh`, `/bin/bash`, etc.) with full window size negotiation (`TIOCSWINSZ`) and non-blocking I/O multiplexing.
 - **TrueColor & 256-Color Support**: Full 24-bit RGB TrueColor escaping and standard ANSI 16/256 palette support.
 - **Full Screen & Scrollback Clear**: Complete terminal reset with `Cmd+K` (macOS) or `Ctrl+K` (Linux/Windows) that flushes active screen and all 10,000 lines of scrollback buffer.
