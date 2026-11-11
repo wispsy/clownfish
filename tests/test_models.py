@@ -44,3 +44,16 @@ def test_selection_normalization_and_empty():
     p1, p2 = sel.normalized()
     assert p1 == (2, 1)
     assert p2 == (12, 4)
+
+
+def test_clownfish_module_attributes():
+    import clownfish
+    from clownfish.app import TkTerminalApp
+
+    assert clownfish.TkTerminalApp is TkTerminalApp
+
+    import pytest
+
+    with pytest.raises(AttributeError):
+        _ = clownfish.non_existent_attribute
+

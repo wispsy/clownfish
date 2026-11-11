@@ -1,12 +1,14 @@
 """clownfish - A modern terminal emulator written in Python and Tkinter."""
 
-import tkinter as tk
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from clownfish.app import TkTerminalApp
 from clownfish.models import Cell, Selection, Style
 from clownfish.parser import VT100Parser
 from clownfish.screen import ScreenBuffer
+
+if TYPE_CHECKING:
+    from clownfish.app import TkTerminalApp
 
 __version__ = "0.1.0"
 __all__ = [
@@ -20,8 +22,20 @@ __all__ = [
 ]
 
 
+def __getattr__(name: str) -> Any:
+    if name == "TkTerminalApp":
+        from clownfish.app import TkTerminalApp
+
+        return TkTerminalApp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def main() -> None:
     """Launch clownfish terminal emulator."""
+    import tkinter as tk
+
+    from clownfish.app import TkTerminalApp
+
     root = tk.Tk()
     root.title("clownfish")
 
