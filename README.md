@@ -10,6 +10,8 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **VT/xterm & Keyboard Conformance**: Full F1–F12 function key encoding, standard xterm modified navigation keys (`Ctrl/Alt/Shift + Arrows/Home/End/PageUp/PageDown`), DECOM Origin Mode (`?6h`/`?6l`), DECAWM Auto-wrap Mode (`?7h`/`?7l`), DECSCUSR cursor styles (block, underline, bar), and DEC Mode 2026 Synchronized Output for tear-free rendering.
+- **Mouse Motion Reporting**: Button motion tracking (`?1002h`) and any-event motion tracking (`?1003h`) alongside standard press/release (`?1000h`) and SGR format (`?1006h`).
 - **Interactive Login Shells & Job Control**: Launches native user shells (`/bin/zsh`, `/bin/bash`) as login interactive shells (`-l -i`) with controlling terminal allocation (`TIOCSCTTY`), pre-spawn window sizing (`TIOCSWINSZ`), and full POSIX job control (`Ctrl+C`, `Ctrl+Z`, `fg`, `bg`).
 - **Non-Destructive Soft-Wrap Reflow**: Dynamic text reflow (`Row.is_wrapped`) when resizing terminal columns, preserving character buffers, styles, wide glyphs, and cursor positioning without data loss.
 - **Screen-Editing VT Sequences**: Full support for Cursor Next/Previous Line (`CSI E`/`F`), Erase Characters (`CSI X`), Insert/Delete Lines (`CSI L`/`M`), Scroll Up/Down (`CSI S`/`T`), and ANSI Cursor Save/Restore (`CSI s`/`u`).

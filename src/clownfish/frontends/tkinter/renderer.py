@@ -35,6 +35,9 @@ class TkCanvasRenderer:
 
     def render(self, screen: ScreenBuffer, cols: int, rows: int) -> None:
         """Render dirty rows and update the cursor position."""
+        if getattr(screen, "synchronized_output", False):
+            return
+
         if screen.dirty_lines:
             for r in list(screen.dirty_lines):
                 if 0 <= r < rows:
@@ -45,10 +48,38 @@ class TkCanvasRenderer:
         if screen.cursor_visible and screen.scroll_offset == 0:
             cx = screen.cursor_x * self.cell_w
             cy = screen.cursor_y * self.cell_h
-            self.canvas.create_rectangle(
-                cx, cy, cx + self.cell_w, cy + self.cell_h,
-                fill=self.config.cursor_color, outline="", stipple="gray50", tags="cursor"
-            )
+            style = getattr(screen, "cursor_style", 2)
+            if style in (3, 4):  # Underline
+                self.canvas.create_rectangle(
+                    cx,
+                    cy + self.cell_h - 2,
+                    cx + self.cell_w,
+                    cy + self.cell_h,
+                    fill=self.config.cursor_color,
+                    outline="",
+                    tags="cursor",
+                )
+            elif style in (5, 6):  # Bar (I-beam)
+                self.canvas.create_rectangle(
+                    cx,
+                    cy,
+                    cx + 2,
+                    cy + self.cell_h,
+                    fill=self.config.cursor_color,
+                    outline="",
+                    tags="cursor",
+                )
+            else:  # Block
+                self.canvas.create_rectangle(
+                    cx,
+                    cy,
+                    cx + self.cell_w,
+                    cy + self.cell_h,
+                    fill=self.config.cursor_color,
+                    outline="",
+                    stipple="gray50",
+                    tags="cursor",
+                )
 
     def draw_selection(self, selection: Selection, cols: int) -> None:
         """Draw selection rectangles over selected character cells."""

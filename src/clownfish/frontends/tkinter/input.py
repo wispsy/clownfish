@@ -77,8 +77,15 @@ class TkInputHandler:
     def on_button_1_motion(
         self, event: tk.Event, cell_w: int, cell_h: int
     ) -> None:
-        """Handle mouse drag selection."""
-        if self.session.parser.mouse_tracking or not self.selection.active:
+        """Handle mouse drag selection or button-event tracking."""
+        if self.session.parser.mouse_tracking:
+            if getattr(self.session.parser, "mouse_button_motion", False) or getattr(
+                self.session.parser, "mouse_all_motion", False
+            ):
+                col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+                self.session.send_mouse(32, col, row, release=False)
+            return
+        if not self.selection.active:
             return
         col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
         self.selection.end_col = col
@@ -139,8 +146,12 @@ class TkInputHandler:
     def on_pointer_motion(
         self, event: tk.Event, cell_w: int, cell_h: int, canvas: tk.Canvas
     ) -> None:
-        """Update cursor shape for OSC 8 hyperlinks."""
+        """Update cursor shape for OSC 8 hyperlinks or report motion in any-event tracking."""
         col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        if getattr(self.session.parser, "mouse_all_motion", False):
+            self.session.send_mouse(35, col, row, release=False)
+            return
+
         cell = self.session.screen.get_visible_row(row)[col]
         if cell.url:
             canvas.config(cursor="hand2")
