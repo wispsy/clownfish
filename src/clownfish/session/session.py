@@ -97,8 +97,12 @@ class TerminalSession:
         """Register a callback to wake the main UI thread when new transport events arrive."""
         self._event_notifier = notifier
 
-    def drain_events(self) -> None:
-        """Drain and process all pending transport events on the caller's thread."""
+    def drain_events(self, max_bytes: int = 512_000) -> bool:
+        """Drain and process pending transport events on the caller's thread.
+
+        Returns True if more events remain pending in the queue after the batch limit.
+        """
+        bytes_processed = 0
         while not self._event_queue.empty():
             try:
                 event_type, payload = self._event_queue.get_nowait()
@@ -106,12 +110,17 @@ class TerminalSession:
                 break
 
             if event_type == "data":
+                bytes_processed += len(payload)
                 text = self.utf8_decoder.decode(payload, final=False)
                 self.parser.feed(text)
                 if self.on_output:
                     self.on_output()
+                if bytes_processed >= max_bytes:
+                    return not self._event_queue.empty()
             elif event_type == "close" and self.on_close:
                 self.on_close()
+
+        return False
 
     def start(self) -> None:
         """Start the transport layer."""

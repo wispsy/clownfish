@@ -10,6 +10,7 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **High-Throughput PTY Batching & Idle Throttling**: Bounded PTY event processing (`drain_events(max_bytes=512_000)`) with adaptive tick rate (`after(1)` for pending stream bursts, `after(16)` for interactive typing) and cursor state caching to eliminate canvas churn when idle.
 - **Security & OSC Integrations**: Base64 clipboard get/set (`OSC 52`) with size-bounded payload decoding, current working directory tracking (`OSC 7`), strict allowlisted URL scheme validation for hyperlinks (`OSC 8`), and desktop notifications (`OSC 9` and `OSC 777`).
 - **Unicode Grapheme Clusters & Complex Emojis**: Support for Zero-Width Joiner (ZWJ, `\u200D`) connected emoji sequences (e.g. `👩‍💻`), Fitzpatrick skin tone modifiers, regional indicator flag pairs (`🇯🇵`), and extended emoji/symbol pictographs in monospace terminal grid math.
 - **VT/xterm & Keyboard Conformance**: Full F1–F12 function key encoding, standard xterm modified navigation keys (`Ctrl/Alt/Shift + Arrows/Home/End/PageUp/PageDown`), DECOM Origin Mode (`?6h`/`?6l`), DECAWM Auto-wrap Mode (`?7h`/`?7l`), DECSCUSR cursor styles (block, underline, bar), and DEC Mode 2026 Synchronized Output for tear-free rendering.
