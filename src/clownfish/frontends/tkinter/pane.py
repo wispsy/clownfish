@@ -286,7 +286,7 @@ class TerminalPane(tk.Frame):
             self.screen.mark_all_dirty()
 
     def _render_tick(self) -> None:
-        self.session.drain_events()
+        has_pending = self.session.drain_events()
         if self.search_state.query and self.screen.dirty_lines:
             matches = search_screen(self.screen, self.search_state.query)
             self.search_state.set_results(self.search_state.query, matches)
@@ -298,7 +298,8 @@ class TerminalPane(tk.Frame):
                 self.search_state.matches, self.search_state.current_match, self.screen, self.cols, self.rows
             )
         try:
-            self._tick_job = self.after(16, self._render_tick)
+            delay = 1 if has_pending else 16
+            self._tick_job = self.after(delay, self._render_tick)
         except tk.TclError:
             pass
 

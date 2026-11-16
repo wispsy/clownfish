@@ -28,6 +28,7 @@ class TkCanvasRenderer:
         }
         self.cell_w = self.fonts[(False, False)].measure("M")
         self.cell_h = self.fonts[(False, False)].metrics("linespace")
+        self._last_cursor_state: tuple[int, int, bool, int, int] | None = None
 
     @staticmethod
     def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
@@ -38,12 +39,24 @@ class TkCanvasRenderer:
         if getattr(screen, "synchronized_output", False):
             return
 
-        if screen.dirty_lines:
+        had_dirty = bool(screen.dirty_lines)
+        if had_dirty:
             for r in list(screen.dirty_lines):
                 if 0 <= r < rows:
                     self._render_row(screen, r, cols)
             screen.dirty_lines.clear()
 
+        cursor_state = (
+            screen.cursor_x,
+            screen.cursor_y,
+            screen.cursor_visible,
+            getattr(screen, "cursor_style", 2),
+            screen.scroll_offset,
+        )
+        if not had_dirty and cursor_state == self._last_cursor_state:
+            return
+
+        self._last_cursor_state = cursor_state
         self.canvas.delete("cursor")
         if screen.cursor_visible and screen.scroll_offset == 0:
             cx = screen.cursor_x * self.cell_w
