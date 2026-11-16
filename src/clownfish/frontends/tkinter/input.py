@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+import urllib.parse
 import webbrowser
 
 from clownfish.core.models import WORD_DELIMITERS, Selection
@@ -59,10 +60,12 @@ class TkInputHandler:
             self.session.send_mouse(0, col, row, release=False)
             return
 
-        # OSC 8 Hyperlink click handling
+        # OSC 8 Hyperlink click handling (with secure scheme allowlist)
         cell = self.session.screen.get_visible_row(row)[col]
         if cell.url and (event.state & 0x4 or (sys.platform == "darwin" and event.state & 0x8)):
-            webbrowser.open(cell.url)
+            parsed = urllib.parse.urlparse(cell.url)
+            if parsed.scheme in ("http", "https"):
+                webbrowser.open(cell.url)
             return
 
         self.selection = Selection(

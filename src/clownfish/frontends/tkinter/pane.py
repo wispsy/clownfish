@@ -47,6 +47,9 @@ class TerminalPane(tk.Frame):
         self.session.auto_drain = False
         self.session.on_title_changed = self._on_title_changed
         self.session.on_close = self._on_session_close
+        self.session.on_clipboard_write = self._on_clipboard_write
+        self.session.on_clipboard_query = self._on_clipboard_query
+        self.session.on_notification = self._on_notification
 
         self.screen = self.session.screen
         self.parser = self.session.parser
@@ -306,6 +309,28 @@ class TerminalPane(tk.Frame):
     def _on_session_close(self) -> None:
         if self.on_close:
             self.on_close(self)
+
+    def _on_clipboard_write(self, selection: str, text: str) -> None:
+        """Handle OSC 52 clipboard write."""
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+        except (tk.TclError, OSError):
+            pass
+
+    def _on_clipboard_query(self, selection: str) -> str:
+        """Handle OSC 52 clipboard query."""
+        try:
+            return self.clipboard_get()
+        except (tk.TclError, OSError):
+            return ""
+
+    def _on_notification(self, title: str, message: str) -> None:
+        """Handle desktop notification request (OSC 9 / OSC 777)."""
+        try:
+            self.bell()
+        except (tk.TclError, OSError):
+            pass
 
     def close(self) -> None:
         """Close this pane and clean up session and callbacks."""
