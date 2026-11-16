@@ -42,8 +42,10 @@ class VT100Parser:
         # Terminal Flags
         self.application_cursor_keys = False
         self.bracketed_paste_mode = False
-        self.mouse_tracking = False     # ?1000h (Normal tracking)
-        self.sgr_mouse_mode = False      # ?1006h (SGR decimal format)
+        self.mouse_tracking = False       # ?1000h (Normal tracking)
+        self.mouse_button_motion = False  # ?1002h (Button-event motion tracking)
+        self.mouse_all_motion = False     # ?1003h (All-event motion tracking)
+        self.sgr_mouse_mode = False       # ?1006h (SGR decimal format)
         self.kitty_keyboard_flags = 0
         self.kitty_keyboard_stack: list[int] = []
 
@@ -181,6 +183,11 @@ class VT100Parser:
             for mode in modes:
                 if mode == 1:
                     self.application_cursor_keys = enable
+                elif mode == 6:
+                    self.screen.origin_mode = enable
+                    self.screen.move_cursor(0, 0)
+                elif mode == 7:
+                    self.screen.auto_wrap = enable
                 elif mode == 25:
                     self.screen.cursor_visible = enable
                 elif mode in (47, 1047, 1049):
@@ -188,36 +195,53 @@ class VT100Parser:
                         self.screen.enter_alt_screen()
                     else:
                         self.screen.exit_alt_screen()
-                elif mode == 2004:
-                    self.bracketed_paste_mode = enable
                 elif mode == 1000:
                     self.mouse_tracking = enable
+                elif mode == 1002:
+                    self.mouse_tracking = enable
+                    self.mouse_button_motion = enable
+                elif mode == 1003:
+                    self.mouse_tracking = enable
+                    self.mouse_all_motion = enable
                 elif mode == 1006:
                     self.sgr_mouse_mode = enable
+                elif mode == 2004:
+                    self.bracketed_paste_mode = enable
+                elif mode == 2026:
+                    self.screen.synchronized_output = enable
+                    if not enable:
+                        self.screen.mark_all_dirty()
+            return
+
+        if final == "q" and self.intermediate_bytes == " ":
+            # DECSCUSR - Set Cursor Style
+            self.screen.cursor_style = self._param_zero(0, 1)
             return
 
         val1 = self._param(0, 1)
 
         if final == "A":
-            self.screen.move_cursor(max(0, self.screen.cursor_y - val1), self.screen.cursor_x)
+            self.screen.move_cursor(self.screen.cursor_y - val1, self.screen.cursor_x)
         elif final == "B":
-            self.screen.move_cursor(min(self.screen.rows - 1, self.screen.cursor_y + val1), self.screen.cursor_x)
+            self.screen.move_cursor(self.screen.cursor_y + val1, self.screen.cursor_x)
         elif final == "C":
             self.screen.move_cursor(self.screen.cursor_y, min(self.screen.cols - 1, self.screen.cursor_x + val1))
         elif final == "D":
             self.screen.move_cursor(self.screen.cursor_y, max(0, self.screen.cursor_x - val1))
         elif final == "E":
-            self.screen.move_cursor(min(self.screen.rows - 1, self.screen.cursor_y + val1), 0)
+            self.screen.move_cursor(self.screen.cursor_y + val1, 0)
         elif final == "F":
-            self.screen.move_cursor(max(0, self.screen.cursor_y - val1), 0)
+            self.screen.move_cursor(self.screen.cursor_y - val1, 0)
         elif final == "G":
             self.screen.move_cursor(self.screen.cursor_y, min(self.screen.cols - 1, max(0, val1 - 1)))
         elif final == "d":
-            self.screen.move_cursor(min(self.screen.rows - 1, max(0, val1 - 1)), self.screen.cursor_x)
+            target_row = (self.screen.scroll_top + val1 - 1) if self.screen.origin_mode else (val1 - 1)
+            self.screen.move_cursor(target_row, self.screen.cursor_x)
         elif final in ("H", "f"):
             row = (self.params[0][0] - 1) if (len(self.params) > 0 and self.params[0] and self.params[0][0] > 0) else 0
             col = (self.params[1][0] - 1) if (len(self.params) > 1 and self.params[1] and self.params[1][0] > 0) else 0
-            self.screen.move_cursor(row, col)
+            target_row = (self.screen.scroll_top + row) if self.screen.origin_mode else row
+            self.screen.move_cursor(target_row, col)
         elif final == "J":
             self.screen.erase_in_display(self._param_zero(0, 0))
         elif final == "K":

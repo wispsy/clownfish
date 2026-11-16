@@ -33,6 +33,12 @@ class ScreenBuffer:
         self.scroll_bottom = rows - 1
         self.dirty_lines: set[int] = set(range(rows))
 
+        # VT Modes & Attributes
+        self.origin_mode: bool = False
+        self.auto_wrap: bool = True
+        self.cursor_style: int = 2  # 0/1: blink block, 2: steady block, 3/4: underline, 5/6: bar
+        self.synchronized_output: bool = False
+
         self.primary_grid: list[Row] = [self._blank_row() for _ in range(rows)]
         self.scrollback: deque[Row] = deque(maxlen=max_scrollback)
         self.scroll_offset = 0
@@ -211,7 +217,9 @@ class ScreenBuffer:
         return max(0, min(len(self.scrollback), target_offset))
 
     def move_cursor(self, row: int, col: int):
-        self.cursor_y = max(0, min(self.rows - 1, row))
+        min_r = self.scroll_top if self.origin_mode else 0
+        max_r = self.scroll_bottom if self.origin_mode else (self.rows - 1)
+        self.cursor_y = max(min_r, min(max_r, row))
         self.cursor_x = max(0, min(self.cols - 1, col))
         self.wrap_pending = False
 
@@ -236,15 +244,22 @@ class ScreenBuffer:
 
         # Handle pending autowrap delay when writing the next printable character
         if self.wrap_pending:
-            self.grid[self.cursor_y].is_wrapped = True
-            self.cursor_x = 0
-            self.cursor_y += 1
-            if self.cursor_y > self.scroll_bottom:
-                self.scroll_up(1)
-                self.cursor_y = self.scroll_bottom
+            if self.auto_wrap:
+                self.grid[self.cursor_y].is_wrapped = True
+                self.cursor_x = 0
+                self.cursor_y += 1
+                if self.cursor_y > self.scroll_bottom:
+                    self.scroll_up(1)
+                    self.cursor_y = self.scroll_bottom
             self.wrap_pending = False
 
-        if w == 2 and self.cursor_x >= self.cols - 1:
+        if not self.auto_wrap:
+            if self.cursor_x >= self.cols - 1:
+                self.cursor_x = self.cols - 1
+                if w == 2:
+                    char = " "
+                    w = 1
+        elif w == 2 and self.cursor_x >= self.cols - 1:
             # Wide glyph cannot fit in final single column, wrap immediately
             if self.cursor_x == self.cols - 1:
                 self.grid[self.cursor_y][self.cursor_x] = Cell(
@@ -277,24 +292,37 @@ class ScreenBuffer:
         )
         self.dirty_lines.add(self.cursor_y)
 
-        if w == 2:
-            if self.cursor_x + 1 < self.cols:
-                self.grid[self.cursor_y][self.cursor_x + 1] = Cell(
-                    char="",
-                    style=self.current_style.copy(),
-                    url=self.current_url,
-                    width=0,
-                )
-            if self.cursor_x + 2 >= self.cols:
-                self.cursor_x = self.cols - 1
-                self.wrap_pending = True
+        if self.auto_wrap:
+            if w == 2:
+                if self.cursor_x + 1 < self.cols:
+                    self.grid[self.cursor_y][self.cursor_x + 1] = Cell(
+                        char="",
+                        style=self.current_style.copy(),
+                        url=self.current_url,
+                        width=0,
+                    )
+                if self.cursor_x + 2 >= self.cols:
+                    self.cursor_x = self.cols - 1
+                    self.wrap_pending = True
+                else:
+                    self.cursor_x += 2
             else:
-                self.cursor_x += 2
+                if self.cursor_x == self.cols - 1:
+                    self.wrap_pending = True
+                else:
+                    self.cursor_x += 1
         else:
-            if self.cursor_x == self.cols - 1:
-                self.wrap_pending = True
+            if w == 2:
+                if self.cursor_x + 1 < self.cols:
+                    self.grid[self.cursor_y][self.cursor_x + 1] = Cell(
+                        char="",
+                        style=self.current_style.copy(),
+                        url=self.current_url,
+                        width=0,
+                    )
+                self.cursor_x = min(self.cols - 1, self.cursor_x + 2)
             else:
-                self.cursor_x += 1
+                self.cursor_x = min(self.cols - 1, self.cursor_x + 1)
 
     def erase_in_display(self, mode: int = 0):
         self.wrap_pending = False
