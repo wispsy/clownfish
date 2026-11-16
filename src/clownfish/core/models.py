@@ -15,12 +15,28 @@ def char_width(char: str) -> int:
     if not char:
         return 0
     cp = ord(char[0])
-    # Zero-width control and format characters / combining characters
-    if cp in (0x200B, 0x200C, 0x200D, 0xFE0E, 0xFE0F) or unicodedata.combining(char[0]):
+    # Zero-width control, format, combining marks, Fitzpatrick skin tone modifiers, and variation selectors
+    if (
+        cp in (0x200B, 0x200C, 0x200D, 0xFE0E, 0xFE0F, 0x20E3)
+        or (0x1F3FB <= cp <= 0x1F3FF)  # Fitzpatrick emoji modifiers (skin tone)
+        or (0xE0020 <= cp <= 0xE007F)  # Tags
+        or unicodedata.combining(char[0])
+    ):
         return 0
     # East Asian Width 'W' (Wide) and 'F' (Fullwidth) occupy 2 columns
     eaw = unicodedata.east_asian_width(char[0])
     if eaw in ("W", "F"):
+        return 2
+    # Standard emoji and pictograph ranges occupying 2 columns in modern terminals
+    if (
+        (0x1F300 <= cp <= 0x1F5FF)
+        or (0x1F600 <= cp <= 0x1F64F)
+        or (0x1F680 <= cp <= 0x1F6FF)
+        or (0x1F900 <= cp <= 0x1F9FF)
+        or (0x1FA70 <= cp <= 0x1FAFF)
+        or (0x2600 <= cp <= 0x26FF)
+        or (0x2700 <= cp <= 0x27BF)
+    ):
         return 2
     return 1
 
