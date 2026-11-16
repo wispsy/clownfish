@@ -52,22 +52,35 @@ class TerminalSession:
         on_output: Callable[[], None] | None = None,
         on_close: Callable[[], None] | None = None,
         auto_drain: bool = True,
+        on_cwd_changed: Callable[[str], None] | None = None,
+        on_notification: Callable[[str, str], None] | None = None,
+        on_clipboard_write: Callable[[str, str], None] | None = None,
+        on_clipboard_query: Callable[[str], str] | None = None,
     ) -> None:
         self.cols = cols
         self.rows = rows
         self.title = title
+        self.cwd = ""
         self.auto_drain = auto_drain
 
         self.on_title_changed = on_title_changed
         self.on_bell = on_bell
         self.on_output = on_output
         self.on_close = on_close
+        self.on_cwd_changed = on_cwd_changed
+        self.on_notification = on_notification
+        self.on_clipboard_write = on_clipboard_write
+        self.on_clipboard_query = on_clipboard_query
 
         self.screen = ScreenBuffer(cols=cols, rows=rows, max_scrollback=max_scrollback)
         self.parser = VT100Parser(
             self.screen,
             write_response=self._on_parser_response,
             on_title_change=self._on_parser_title,
+            on_cwd_change=self._on_parser_cwd,
+            on_notification=self._on_parser_notification,
+            on_clipboard_write=self._on_parser_clipboard_write,
+            on_clipboard_query=self._on_parser_clipboard_query,
         )
         self.utf8_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
@@ -117,6 +130,28 @@ class TerminalSession:
         self.title = title
         if self.on_title_changed is not None:
             self.on_title_changed(title)
+
+    def _on_parser_cwd(self, cwd: str) -> None:
+        """Propagate working directory changes from OSC 7."""
+        self.cwd = cwd
+        if self.on_cwd_changed is not None:
+            self.on_cwd_changed(cwd)
+
+    def _on_parser_notification(self, title: str, message: str) -> None:
+        """Propagate desktop notifications from OSC 9/777."""
+        if self.on_notification is not None:
+            self.on_notification(title, message)
+
+    def _on_parser_clipboard_write(self, selection: str, text: str) -> None:
+        """Handle OSC 52 clipboard write."""
+        if self.on_clipboard_write is not None:
+            self.on_clipboard_write(selection, text)
+
+    def _on_parser_clipboard_query(self, selection: str) -> str:
+        """Handle OSC 52 clipboard query."""
+        if self.on_clipboard_query is not None:
+            return self.on_clipboard_query(selection)
+        return ""
 
     def _on_transport_data(self, raw_bytes: bytes) -> None:
         """Enqueue incoming raw bytes from the transport."""

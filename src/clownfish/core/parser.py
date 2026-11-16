@@ -1,5 +1,8 @@
 """VT100, ANSI, and OSC escape sequence parser."""
 
+import base64
+import binascii
+import urllib.parse
 from collections.abc import Callable
 
 from clownfish.core.models import DEFAULT_BG, DEFAULT_FG
@@ -23,10 +26,18 @@ class VT100Parser:
         screen: ScreenBuffer,
         write_response: Callable[[bytes], None] | None = None,
         on_title_change: Callable[[str], None] | None = None,
+        on_cwd_change: Callable[[str], None] | None = None,
+        on_notification: Callable[[str, str], None] | None = None,
+        on_clipboard_write: Callable[[str, str], None] | None = None,
+        on_clipboard_query: Callable[[str], str] | None = None,
     ):
         self.screen = screen
         self.write_response = write_response
         self.on_title_change = on_title_change
+        self.on_cwd_change = on_cwd_change
+        self.on_notification = on_notification
+        self.on_clipboard_write = on_clipboard_write
+        self.on_clipboard_query = on_clipboard_query
         self.state = self.STATE_GROUND
         self.params: list[list[int]] = []
         self.current_subparams: list[int] = []
@@ -339,11 +350,54 @@ class VT100Parser:
             parts = payload.split(";", 1)
             if len(parts) == 2:
                 self.screen.icon_name = parts[1]
+        elif payload.startswith("7;"):
+            parts = payload.split(";", 1)
+            if len(parts) == 2:
+                uri = parts[1]
+                if uri.startswith("file://"):
+                    parsed = urllib.parse.urlparse(uri)
+                    path = urllib.parse.unquote(parsed.path)
+                else:
+                    path = urllib.parse.unquote(uri)
+                self.screen.cwd = path
+                if self.on_cwd_change:
+                    self.on_cwd_change(path)
         elif payload.startswith("8;"):
             parts = payload.split(";", 2)
             if len(parts) >= 3:
                 url = parts[2]
                 self.screen.current_url = url if url else None
+        elif payload.startswith("9;"):
+            parts = payload.split(";", 1)
+            msg = parts[1] if len(parts) > 1 else ""
+            if self.on_notification:
+                self.on_notification("Terminal", msg)
+        elif payload.startswith("52;"):
+            parts = payload.split(";", 2)
+            sel = parts[1] if len(parts) > 1 else ""
+            data = parts[2] if len(parts) > 2 else (parts[1] if len(parts) == 2 else "")
+            if data == "?":
+                if self.on_clipboard_query:
+                    text = self.on_clipboard_query(sel)
+                    if text:
+                        b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+                        out_sel = sel or "c"
+                        self._send_response(f"\x1b]52;{out_sel};{b64}\x1b\\".encode("ascii"))
+            elif data:
+                try:
+                    if len(data) <= 1_000_000:
+                        text = base64.b64decode(data.encode("ascii")).decode("utf-8", errors="replace")
+                        if self.on_clipboard_write:
+                            self.on_clipboard_write(sel, text)
+                except (ValueError, binascii.Error):
+                    return
+        elif payload.startswith("777;"):
+            parts = payload.split(";")
+            if len(parts) >= 4 and parts[1] == "notify":
+                title = parts[2]
+                msg = parts[3]
+                if self.on_notification:
+                    self.on_notification(title, msg)
         elif payload == "10;?" or payload.startswith("10;?"):
             fg_hex = f"{DEFAULT_FG[0]:02x}{DEFAULT_FG[0]:02x}/{DEFAULT_FG[1]:02x}{DEFAULT_FG[1]:02x}/{DEFAULT_FG[2]:02x}{DEFAULT_FG[2]:02x}"
             self._send_response(f"\x1b]10;rgb:{fg_hex}\x1b\\".encode("ascii"))

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.4.5"
+__version__ = "0.4.6"
 __all__ = [
     "Cell",
     "PTYTransport",

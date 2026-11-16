@@ -53,6 +53,7 @@ class ScreenBuffer:
         self.prompt_markers: list[PromptMarker] = []
         self.title: str = ""
         self.icon_name: str = ""
+        self.cwd: str = ""
 
     def _blank_row(self, cols: int | None = None, is_wrapped: bool = False) -> Row:
         c = cols if cols is not None else self.cols
