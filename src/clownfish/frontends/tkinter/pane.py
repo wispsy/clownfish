@@ -42,7 +42,9 @@ class TerminalPane(tk.Frame):
             max_scrollback=self.config.max_scrollback,
             on_title_changed=self._on_title_changed,
             on_close=self._on_session_close,
+            auto_drain=False,
         )
+        self.session.auto_drain = False
         self.session.on_title_changed = self._on_title_changed
         self.session.on_close = self._on_session_close
 
@@ -278,7 +280,6 @@ class TerminalPane(tk.Frame):
             self.canvas.delete("selection_box")
             self.selection.active = False
             self.session.resize(new_cols, new_rows)
-            self.canvas.delete("all")
             self.screen.mark_all_dirty()
 
     def _render_tick(self) -> None:

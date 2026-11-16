@@ -72,15 +72,22 @@ class PTYTransport(Transport):
             shell = env.get("SHELL") or ("/bin/zsh" if sys.platform == "darwin" else "/bin/bash")
             cmd = [shell, "-l", "-i"]
 
-        def _setup_ctty() -> None:
-            try:
-                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-            except OSError:
-                pass
+        if sys.platform != "win32":
+            trampoline = (
+                "import fcntl, os, sys, termios\n"
+                "try:\n"
+                "    fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+                "except OSError:\n"
+                "    pass\n"
+                "os.execvp(sys.argv[1], sys.argv[1:])\n"
+            )
+            spawn_cmd = [sys.executable, "-c", trampoline, *cmd]
+        else:
+            spawn_cmd = cmd
 
         try:
             proc = subprocess.Popen(
-                cmd,
+                spawn_cmd,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
@@ -88,7 +95,6 @@ class PTYTransport(Transport):
                 env=env,
                 close_fds=True,
                 start_new_session=True,
-                preexec_fn=_setup_ctty,  # noqa: PLW1509 - TIOCSCTTY required for BSD/macOS job control
             )
         except OSError:
             os.close(master_fd)
