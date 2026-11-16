@@ -11,7 +11,7 @@ from clownfish.frontends.tkinter.renderer import TkCanvasRenderer
 
 
 class SplitView(tk.Frame):
-    """Container holding terminal panes with arbitrary horizontal and vertical splits."""
+    """Container holding terminal panes with arbitrary nested horizontal and vertical splits."""
 
     def __init__(
         self,
@@ -67,38 +67,68 @@ class SplitView(tk.Frame):
             self.active_pane = new_pane
             return new_pane
 
-        parent = target.master
         orient = tk.HORIZONTAL if orientation == "horizontal" else tk.VERTICAL
+        parent = target.master
 
-        # Create PanedWindow to replace target in parent
-        paned = tk.PanedWindow(
-            parent,
-            orient=orient,
-            sashwidth=4,
-            sashrelief=tk.FLAT,
-            bg="#2a2a32",
-            bd=0,
-        )
-
-        # Retain packing info of target
-        pack_info = target.pack_info() if hasattr(target, "pack_info") else {}
-        target.pack_forget()
-
-        if pack_info:
-            paned.pack(**pack_info)
-        else:
+        if parent == self:
+            # First split from the root SplitView frame
+            paned = tk.PanedWindow(
+                self,
+                orient=orient,
+                sashwidth=4,
+                sashrelief=tk.FLAT,
+                bg="#2a2a32",
+                bd=0,
+            )
+            target.pack_forget()
             paned.pack(fill=tk.BOTH, expand=True)
 
-        # Reparent target pane into paned window
-        # In Tkinter, reparenting widget master is done by recreating or re-packing
-        # Instead, let's create paned window and add target and new_pane to paned
-        paned.add(target, stretch="always")
-        new_pane = self._create_pane(paned)
-        paned.add(new_pane, stretch="always")
+            paned.add(target, stretch="always")
+            new_pane = self._create_pane(paned)
+            paned.add(new_pane, stretch="always")
 
+            self._panes.append(new_pane)
+            self.active_pane = new_pane
+            new_pane.focus()
+            return new_pane
+
+        if isinstance(parent, tk.PanedWindow):
+            current_orient = parent.cget("orient")
+            if str(current_orient) == str(orient):
+                # Sibling split in existing PanedWindow
+                new_pane = self._create_pane(parent)
+                parent.add(new_pane, after=str(target), stretch="always")
+                self._panes.append(new_pane)
+                self.active_pane = new_pane
+                new_pane.focus()
+                return new_pane
+
+            # Nested split requiring a perpendicular PanedWindow
+            nested_paned = tk.PanedWindow(
+                parent,
+                orient=orient,
+                sashwidth=4,
+                sashrelief=tk.FLAT,
+                bg="#2a2a32",
+                bd=0,
+            )
+            parent.add(nested_paned, after=str(target), stretch="always")
+            parent.forget(target)
+
+            nested_paned.add(target, stretch="always")
+            new_pane = self._create_pane(nested_paned)
+            nested_paned.add(new_pane, stretch="always")
+
+            self._panes.append(new_pane)
+            self.active_pane = new_pane
+            new_pane.focus()
+            return new_pane
+
+        # Fallback
+        new_pane = self._create_pane(self)
+        new_pane.pack(fill=tk.BOTH, expand=True)
         self._panes.append(new_pane)
         self.active_pane = new_pane
-        new_pane.focus()
         return new_pane
 
     def split_horizontal(self, target_pane: TerminalPane | None = None) -> TerminalPane:
@@ -110,7 +140,7 @@ class SplitView(tk.Frame):
         return self.split(target_pane, orientation="vertical")
 
     def close_pane(self, pane: TerminalPane) -> None:
-        """Close and remove a pane from the split view."""
+        """Close and remove a pane from the split view hierarchy."""
         if pane not in self._panes:
             return
 
@@ -118,25 +148,38 @@ class SplitView(tk.Frame):
         parent = pane.master
 
         if isinstance(parent, tk.PanedWindow):
-            # Check remaining siblings
             remaining = [w for w in parent.panes() if w != str(pane)]
+            try:
+                parent.forget(pane)
+            except tk.TclError:
+                pass
             pane.close()
+
             if len(remaining) == 1:
-                # Collapse PanedWindow into parent
+                # Collapse single-child PanedWindow into parent
                 remaining_widget = self.nametowidget(remaining[0])
-                pack_info = parent.pack_info()
-                parent.pack_forget()
-                parent.remove(remaining_widget)
-                if pack_info:
-                    remaining_widget.pack(**pack_info)
-                else:
+                grandparent = parent.master
+                if grandparent == self:
+                    try:
+                        parent.forget(remaining_widget)
+                    except tk.TclError:
+                        pass
+                    parent.destroy()
                     remaining_widget.pack(fill=tk.BOTH, expand=True)
+                elif isinstance(grandparent, tk.PanedWindow):
+                    try:
+                        grandparent.add(remaining_widget, after=str(parent), stretch="always")
+                        grandparent.forget(parent)
+                    except tk.TclError:
+                        pass
+                    parent.destroy()
+            elif len(remaining) == 0:
                 parent.destroy()
         else:
             pane.close()
 
         # Update active pane
-        if self.active_pane == pane:
+        if self.active_pane == pane or self.active_pane not in self._panes:
             self.active_pane = self._panes[-1] if self._panes else None
             if self.active_pane:
                 self.active_pane.focus()

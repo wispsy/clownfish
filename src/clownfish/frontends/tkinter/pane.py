@@ -43,7 +43,6 @@ class TerminalPane(tk.Frame):
         )
         self.session.on_title_changed = self._on_title_changed
         self.session.on_close = self._on_session_close
-        self.session.set_event_notifier(self._on_session_event)
 
         self.screen = self.session.screen
         self.parser = self.session.parser
@@ -67,7 +66,6 @@ class TerminalPane(tk.Frame):
         self.canvas.config(width=self.cols * self.cell_w, height=self.rows * self.cell_h)
 
         self.input_handler = TkInputHandler(self.session)
-        self.selection = self.input_handler.selection
 
         # Search Bar Overlay (hidden by default)
         self._search_frame: tk.Frame | None = None
@@ -79,6 +77,15 @@ class TerminalPane(tk.Frame):
         self.session.start()
         self._tick_job: str | None = None
         self._render_tick()
+
+    @property
+    def selection(self):
+        """Return the active text selection from the input handler."""
+        return self.input_handler.selection
+
+    @selection.setter
+    def selection(self, val):
+        self.input_handler.selection = val
 
     def _init_search_bar(self) -> None:
         self._search_frame = tk.Frame(self, bg="#202025", padx=6, pady=4)
@@ -272,17 +279,13 @@ class TerminalPane(tk.Frame):
             self.canvas.delete("all")
             self.screen.mark_all_dirty()
 
-    def _on_session_event(self) -> None:
-        try:
-            self.after_idle(self._drain_session_events)
-        except tk.TclError:
-            pass
-
-    def _drain_session_events(self) -> None:
-        self.session.drain_events()
-
     def _render_tick(self) -> None:
         self.session.drain_events()
+        if self.search_state.query and self.screen.dirty_lines:
+            matches = search_screen(self.screen, self.search_state.query)
+            self.search_state.set_results(self.search_state.query, matches)
+            self._update_search_ui(jump=False)
+
         self.renderer.render(self.screen, self.cols, self.rows)
         if self.search_state.matches:
             self.renderer.draw_search_matches(

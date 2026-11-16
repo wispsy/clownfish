@@ -10,6 +10,33 @@ from clownfish.core.models import WORD_DELIMITERS, Selection
 from clownfish.session.session import TerminalSession
 
 
+def is_application_shortcut(event: tk.Event) -> bool:
+    """Return True if event represents an application-level menu/tab/window shortcut."""
+    is_mac = sys.platform == "darwin"
+    has_cmd = is_mac and bool(event.state & 0x18 or event.state & 0x48 or event.state & 0x40)
+    has_ctrl = bool(event.state & 0x4)
+    has_shift = bool(event.state & 0x1)
+    has_alt = bool(event.state & 0x8 or event.state & 0x80)
+
+    sym = event.keysym.lower()
+
+    if is_mac and has_cmd:
+        if sym in ("t", "w", "d", "f", "k", "c", "v"):
+            return True
+        if event.keysym in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
+            return True
+        if event.keysym in ("Up", "Down"):
+            return True
+
+    if has_ctrl and event.keysym in ("Tab", "ISO_Left_Tab"):
+        return True
+
+    if has_ctrl and has_shift and sym in ("t", "w", "d", "f", "k", "c", "v"):
+        return True
+
+    return bool(has_alt and event.keysym in ("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+
+
 class TkInputHandler:
     """Translates Tkinter UI events into terminal session interactions."""
 
@@ -136,6 +163,9 @@ class TkInputHandler:
 
     def on_key_press(self, event: tk.Event, canvas: tk.Canvas) -> str:
         """Forward key press event to terminal session."""
+        if is_application_shortcut(event):
+            return ""
+
         self.session.screen.reset_view()
 
         if event.keysym == "Escape" and self.selection.active:

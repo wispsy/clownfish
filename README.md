@@ -97,7 +97,8 @@ clownfish/
 │       │   ├── models.py          # Data models (Cell, Style, Selection, PromptMarker)
 │       │   ├── keyboard.py        # Keystroke encoding & Kitty keyboard protocol
 │       │   ├── parser.py          # VT100 / ANSI / OSC escape sequence parser
-│       │   └── screen.py          # Screen buffer, dual grid, autowrap & scrollback
+│       │   ├── screen.py          # Screen buffer, dual grid, autowrap & scrollback
+│       │   └── search.py          # In-buffer regex & plain text search engine
 │       ├── session/               # Terminal session layer
 │       │   ├── session.py         # TerminalSession lifecycle manager
 │       │   └── transport.py       # Abstract Transport base class
@@ -106,13 +107,14 @@ clownfish/
 │       │   └── ssh.py             # SSHTransport via OpenSSH PTY bridge
 │       └── frontends/
 │           └── tkinter/           # Tkinter desktop frontend
-│               ├── app.py         # TkTerminalApp main window
+│               ├── app.py         # TkTerminalApp main window & menu shortcuts
+│               ├── pane.py        # TerminalPane self-contained terminal widget
+│               ├── split.py       # SplitView arbitrary nested split pane manager
+│               ├── tabs.py        # TabbedTerminalView multi-tab session manager
 │               ├── renderer.py    # Canvas text & selection renderer
 │               └── input.py       # Pointer & keyboard event translator
-└── tests/                         # Comprehensive unit & integration test suite
-```
-│   └── test_unicode.py        # Wide characters & CJK tests
-├── pyproject.toml             # Project metadata & build settings
+├── tests/                         # Comprehensive unit & integration test suite
+├── pyproject.toml                 # Project metadata & build settings
 └── README.md
 ```
 
@@ -120,11 +122,12 @@ clownfish/
 
 ## Roadmap
 
+- [x] Split-pane multiplexing and tabbed sessions.
+- [x] In-buffer regex / plain text search with highlight overlay.
 - [ ] GPU-accelerated texture atlas rendering via Metal/Vulkan.
 - [ ] HarfBuzz typography shaping for developer font ligatures (`->`, `!=`, `===`).
 - [ ] Kitty Graphics Protocol inline image streaming.
 - [ ] Sixel bitmap rasterization protocol support.
-- [ ] Split-pane multiplexing and tabbed sessions.
 
 ---
 
