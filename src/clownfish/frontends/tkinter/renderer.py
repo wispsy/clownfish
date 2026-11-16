@@ -100,7 +100,7 @@ class TkCanvasRenderer:
 
                 is_active = m == active_match
                 color = "#ff9900" if is_active else self.config.search_bg
-                stipple = "gray25" if not is_active else ""
+                stipple = "gray50" if is_active else "gray25"
                 self.canvas.create_rectangle(
                     x1,
                     y1,
@@ -108,6 +108,7 @@ class TkCanvasRenderer:
                     y2,
                     fill=color,
                     outline="#ffffff" if is_active else "",
+                    width=1,
                     stipple=stipple,
                     tags="search_highlight",
                 )

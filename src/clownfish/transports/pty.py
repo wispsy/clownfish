@@ -1,4 +1,4 @@
-"""Local pseudo-terminal (PTY) transport."""
+"""Local pseudo-terminal (PTY) transport using thread-safe subprocess spawning."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import pty
 import select
 import signal
 import struct
+import subprocess
 import termios
 import threading
 from collections import deque
@@ -38,41 +39,50 @@ class PTYTransport(Transport):
 
         self.pid: int | None = None
         self.master_fd: int | None = None
+        self._proc: subprocess.Popen | None = None
         self._running = False
         self._reader_thread: threading.Thread | None = None
         self._write_queue: deque[bytes] = deque()
         self._write_lock = threading.Lock()
 
     def start(self) -> None:
-        """Fork PTY and spawn process and background reader."""
-        if self._running or self.pid is not None:
+        """Allocate PTY, spawn child process with start_new_session, and launch reader."""
+        if self._running or self.master_fd is not None:
             return
 
-        pid, master_fd = pty.fork()
-        if pid == 0:  # Child process
-            if self.cwd:
-                try:
-                    os.chdir(self.cwd)
-                except OSError:
-                    pass
+        master_fd, slave_fd = pty.openpty()
 
-            env = os.environ.copy()
-            env["TERM"] = "xterm-256color"
-            env["COLORTERM"] = "truecolor"
-            if self.env:
-                env.update(self.env)
+        env = os.environ.copy()
+        env["TERM"] = "xterm-256color"
+        env["COLORTERM"] = "truecolor"
+        if self.env:
+            env.update(self.env)
 
-            cmd = self.command
-            if not cmd:
-                shell = env.get("SHELL", "/bin/sh")
-                cmd = [shell]
+        cmd = self.command or [env.get("SHELL", "/bin/sh")]
 
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                cwd=self.cwd,
+                env=env,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except OSError:
+            os.close(master_fd)
+            os.close(slave_fd)
+            raise
+        finally:
             try:
-                os.execvpe(cmd[0], cmd, env)
+                os.close(slave_fd)
             except OSError:
-                os._exit(1)
+                pass
 
-        self.pid = pid
+        self._proc = proc
+        self.pid = proc.pid
         self.master_fd = master_fd
         self._running = True
 
@@ -80,7 +90,7 @@ class PTYTransport(Transport):
         self.resize(self.cols, self.rows)
 
         self._reader_thread = threading.Thread(
-            target=self._reader_loop, name=f"clownfish-pty-{pid}", daemon=True
+            target=self._reader_loop, name=f"clownfish-pty-{proc.pid}", daemon=True
         )
         self._reader_thread.start()
 
@@ -155,8 +165,9 @@ class PTYTransport(Transport):
             self._write_queue.clear()
 
         fd = self.master_fd
-        pid = self.pid
+        proc = self._proc
         self.master_fd = None
+        self._proc = None
         self.pid = None
 
         if fd is not None:
@@ -165,26 +176,22 @@ class PTYTransport(Transport):
             except OSError:
                 pass
 
-        if pid is not None:
+        if proc is not None:
             try:
-                os.kill(pid, signal.SIGHUP)
+                proc.send_signal(signal.SIGHUP)
             except OSError:
                 pass
             try:
-                os.waitpid(pid, os.WNOHANG)
+                proc.poll()
             except OSError:
                 pass
 
     def is_alive(self) -> bool:
         """Check if child process is alive."""
-        if not self._running or self.pid is None:
+        if not self._running or self._proc is None:
             return False
-        try:
-            res_pid, _ = os.waitpid(self.pid, os.WNOHANG)
-            if res_pid == self.pid:
-                self._running = False
-                return False
-            return True
-        except OSError:
+        ret = self._proc.poll()
+        if ret is not None:
             self._running = False
             return False
+        return True

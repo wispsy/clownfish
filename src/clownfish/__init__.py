@@ -18,16 +18,16 @@ from clownfish.core.search import SearchMatch, SearchState, search_screen
 from clownfish.session.session import TerminalSession
 from clownfish.session.transport import Transport
 from clownfish.syntax import highlight_code, is_syntax_available, print_highlighted
-from clownfish.transports.pty import PTYTransport
-from clownfish.transports.ssh import SSHTransport
 
 if TYPE_CHECKING:
     from clownfish.frontends.tkinter.app import TkTerminalApp
     from clownfish.frontends.tkinter.pane import TerminalPane
     from clownfish.frontends.tkinter.split import SplitView
     from clownfish.frontends.tkinter.tabs import TabbedTerminalView
+    from clownfish.transports.pty import PTYTransport
+    from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = [
     "Cell",
     "PTYTransport",
@@ -74,6 +74,14 @@ def __getattr__(name: str) -> Any:
         from clownfish.frontends.tkinter.tabs import TabbedTerminalView
 
         return TabbedTerminalView
+    if name == "PTYTransport":
+        from clownfish.transports.pty import PTYTransport
+
+        return PTYTransport
+    if name == "SSHTransport":
+        from clownfish.transports.ssh import SSHTransport
+
+        return SSHTransport
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

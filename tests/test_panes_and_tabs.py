@@ -16,6 +16,34 @@ def test_public_tab_and_pane_exports() -> None:
     assert hasattr(clownfish, "search_screen")
 
 
+def test_is_application_shortcut() -> None:
+    from unittest.mock import MagicMock
+
+    from clownfish.frontends.tkinter.input import is_application_shortcut
+
+    # Helper mock
+    def make_event(keysym: str, state: int) -> MagicMock:
+        ev = MagicMock()
+        ev.keysym = keysym
+        ev.state = state
+        return ev
+
+    # Plain keys should not be application shortcuts
+    assert not is_application_shortcut(make_event("a", 0))
+    assert not is_application_shortcut(make_event("Return", 0))
+    assert not is_application_shortcut(make_event("c", 0x4))  # Ctrl+C in terminal (SIGINT)
+
+    # Ctrl+Tab should be application shortcut
+    assert is_application_shortcut(make_event("Tab", 0x4))
+
+    # Ctrl+Shift+T, Ctrl+Shift+W
+    assert is_application_shortcut(make_event("t", 0x4 | 0x1))
+    assert is_application_shortcut(make_event("w", 0x4 | 0x1))
+
+    # Alt+1..9
+    assert is_application_shortcut(make_event("1", 0x8))
+
+
 def test_tabbed_view_and_split_lifecycle() -> None:
     try:
         import tkinter as tk
@@ -82,3 +110,59 @@ def test_tabbed_view_and_split_lifecycle() -> None:
             root.destroy()
         except (tk.TclError, OSError):
             pass
+
+
+def test_nested_split_tree_and_selection() -> None:
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+    except (ImportError, tk.TclError):
+        pytest.skip("Tkinter or X11/macOS display not available in this test environment")
+
+    try:
+        from clownfish.core.models import Selection
+        from clownfish.frontends.tkinter.split import SplitView
+
+        sv = SplitView(root)
+        initial_pane = sv.active_pane
+        assert initial_pane is not None
+        assert len(sv.panes()) == 1
+
+        # Test selection property synchronization
+        assert not initial_pane.selection.active
+        initial_pane.input_handler.selection = Selection(
+            start_col=2, start_row=1, end_col=10, end_row=1, active=True
+        )
+        assert initial_pane.selection.active
+        assert initial_pane.selection.start_col == 2
+
+        # 1. Split vertically: creates side-by-side panes
+        pane_right = sv.split_vertical()
+        assert len(sv.panes()) == 2
+        assert sv.active_pane == pane_right
+
+        # 2. Split horizontally inside the right pane: creates nested vertical split in right pane
+        pane_bottom_right = sv.split_horizontal()
+        assert len(sv.panes()) == 3
+        assert sv.active_pane == pane_bottom_right
+
+        # 3. Close the nested pane: collapses cleanly without TclError
+        sv.close_pane(pane_bottom_right)
+        assert len(sv.panes()) == 2
+        assert pane_bottom_right not in sv.panes()
+
+        # 4. Close the other split pane: collapses back to initial pane
+        sv.close_pane(pane_right)
+        assert len(sv.panes()) == 1
+        assert sv.active_pane == initial_pane
+
+    finally:
+        try:
+            for p in sv.panes():
+                p.close()
+            root.destroy()
+        except (tk.TclError, OSError):
+            pass
+

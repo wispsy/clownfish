@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import re
 
+from clownfish.core.models import Cell
 from clownfish.core.screen import ScreenBuffer
 
 
@@ -14,10 +15,29 @@ class SearchMatch:
 
     absolute_row: int
     start_col: int
-    end_col: int  # exclusive
+    end_col: int  # exclusive display column
     text: str
     is_scrollback: bool
     view_row: int  # relative row index within scrollback or grid
+
+
+def _extract_row_text_and_cols(row: list[Cell]) -> tuple[str, list[int], list[int]]:
+    """Extract displayable string alongside character-to-column mappings."""
+    chars: list[str] = []
+    char_start_cols: list[int] = []
+    char_end_cols: list[int] = []
+    col = 0
+    while col < len(row):
+        cell = row[col]
+        if cell.width == 0:
+            col += 1
+            continue
+        w = max(1, cell.width)
+        chars.append(cell.char)
+        char_start_cols.append(col)
+        char_end_cols.append(col + w)
+        col += w
+    return "".join(chars), char_start_cols, char_end_cols
 
 
 def search_screen(
@@ -44,34 +64,42 @@ def search_screen(
 
     # 1. Search scrollback rows
     for sb_idx, row in enumerate(screen.scrollback):
-        line_text = "".join(cell.char for cell in row if cell.width != 0)
+        line_text, start_cols, end_cols = _extract_row_text_and_cols(row)
         for m in pattern.finditer(line_text):
-            matches.append(
-                SearchMatch(
-                    absolute_row=sb_idx,
-                    start_col=m.start(),
-                    end_col=m.end(),
-                    text=m.group(0),
-                    is_scrollback=True,
-                    view_row=sb_idx,
+            s_idx, e_idx = m.start(), m.end()
+            if s_idx < len(start_cols) and e_idx > 0:
+                s_col = start_cols[s_idx]
+                e_col = end_cols[min(len(end_cols) - 1, e_idx - 1)]
+                matches.append(
+                    SearchMatch(
+                        absolute_row=sb_idx,
+                        start_col=s_col,
+                        end_col=e_col,
+                        text=m.group(0),
+                        is_scrollback=True,
+                        view_row=sb_idx,
+                    )
                 )
-            )
 
     # 2. Search active grid rows
     for grid_idx in range(screen.rows):
         row = screen.grid[grid_idx]
-        line_text = "".join(cell.char for cell in row if cell.width != 0)
+        line_text, start_cols, end_cols = _extract_row_text_and_cols(row)
         for m in pattern.finditer(line_text):
-            matches.append(
-                SearchMatch(
-                    absolute_row=scrollback_len + grid_idx,
-                    start_col=m.start(),
-                    end_col=m.end(),
-                    text=m.group(0),
-                    is_scrollback=False,
-                    view_row=grid_idx,
+            s_idx, e_idx = m.start(), m.end()
+            if s_idx < len(start_cols) and e_idx > 0:
+                s_col = start_cols[s_idx]
+                e_col = end_cols[min(len(end_cols) - 1, e_idx - 1)]
+                matches.append(
+                    SearchMatch(
+                        absolute_row=scrollback_len + grid_idx,
+                        start_col=s_col,
+                        end_col=e_col,
+                        text=m.group(0),
+                        is_scrollback=False,
+                        view_row=grid_idx,
+                    )
                 )
-            )
 
     return matches
 
