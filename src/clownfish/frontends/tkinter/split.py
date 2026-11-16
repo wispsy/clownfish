@@ -19,12 +19,14 @@ class SplitView(tk.Frame):
         config: TerminalConfig | None = None,
         on_pane_focus: Callable[[TerminalPane], None] | None = None,
         on_pane_close: Callable[[TerminalPane], None] | None = None,
+        on_pane_title: Callable[[TerminalPane, str], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(master, bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg), **kwargs)
         self.config = config or TerminalConfig()
         self.on_pane_focus = on_pane_focus
         self.on_pane_close = on_pane_close
+        self.on_pane_title = on_pane_title
 
         self._panes: list[TerminalPane] = []
         self.active_pane: TerminalPane | None = None
@@ -41,6 +43,7 @@ class SplitView(tk.Frame):
             config=self.config,
             on_focus=self._handle_pane_focus,
             on_close=self._handle_pane_close,
+            on_title_change=self._handle_pane_title,
         )
 
     def _handle_pane_focus(self, pane: TerminalPane) -> None:
@@ -52,6 +55,10 @@ class SplitView(tk.Frame):
         self.close_pane(pane)
         if self.on_pane_close:
             self.on_pane_close(pane)
+
+    def _handle_pane_title(self, pane: TerminalPane, title: str) -> None:
+        if self.on_pane_title:
+            self.on_pane_title(pane, title)
 
     def panes(self) -> list[TerminalPane]:
         """Return all active terminal panes."""

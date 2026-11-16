@@ -85,6 +85,7 @@ class TabbedTerminalView(tk.Frame):
             config=self.config,
             on_pane_focus=self._on_pane_focused,
             on_pane_close=self._on_pane_closed,
+            on_pane_title=self._on_pane_title_changed,
         )
 
         self.tabs.append((tab_title, split_view))
@@ -195,6 +196,12 @@ class TabbedTerminalView(tk.Frame):
 
     def _on_pane_focused(self, pane: TerminalPane) -> None:
         pass
+
+    def _on_pane_title_changed(self, pane: TerminalPane, title: str) -> None:
+        for idx, (_, sv) in enumerate(self.tabs):
+            if pane in sv.panes():
+                self.set_tab_title(idx, title)
+                break
 
     def _on_pane_closed(self, pane: TerminalPane) -> None:
         sv = self.active_split_view

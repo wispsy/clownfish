@@ -205,7 +205,6 @@ class TkTerminalApp:
         try:
             pane = self.active_pane
             pane.session.clear()
-            pane.canvas.delete("all")
             pane.selection.active = False
         except RuntimeError:
             pass

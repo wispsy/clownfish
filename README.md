@@ -10,11 +10,14 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **Interactive Login Shells & Job Control**: Launches native user shells (`/bin/zsh`, `/bin/bash`) as login interactive shells (`-l -i`) with controlling terminal allocation (`TIOCSCTTY`), pre-spawn window sizing (`TIOCSWINSZ`), and full POSIX job control (`Ctrl+C`, `Ctrl+Z`, `fg`, `bg`).
+- **Screen-Editing VT Sequences**: Full support for Cursor Next/Previous Line (`CSI E`/`F`), Erase Characters (`CSI X`), Insert/Delete Lines (`CSI L`/`M`), Scroll Up/Down (`CSI S`/`T`), and ANSI Cursor Save/Restore (`CSI s`/`u`).
+- **Prompt Preservation on Clear**: Complete terminal reset (`Cmd+K` / `Ctrl+K`) flushes scrollback while requesting interactive shell redraw (`Ctrl+L`), preserving partially typed command lines.
+- **Dynamic Window & Tab Titles**: Shell `precmd` window and tab title sequences (`OSC 0` and `OSC 2`) update desktop tab headers in real time.
 - **Multi-Tab Terminal Sessions**: Manage multiple independent terminal sessions with tab switching shortcuts (`Cmd+T`, `Cmd+W`, `Cmd+1..9`, `Ctrl+Tab`).
 - **Split Panes**: Divide any tab vertically (`Cmd+D`) or horizontally (`Cmd+Shift+D`) with native resizable sash dividers.
 - **In-Buffer Search**: Interactive search bar (`Cmd+F`) across active terminal screen and scrollback history with match highlighting and cycling.
 - **User Preferences**: Persistent configuration in `~/.config/clownfish/config.json`.
-- **POSIX PTY Engine**: Runs native shells (`/bin/zsh`, `/bin/bash`, etc.) with full window size negotiation (`TIOCSWINSZ`) and non-blocking I/O multiplexing.
 - **TrueColor & 256-Color Support**: Full 24-bit RGB TrueColor escaping and standard ANSI 16/256 palette support.
 - **Full Screen & Scrollback Clear**: Complete terminal reset with `Cmd+K` (macOS) or `Ctrl+K` (Linux/Windows) that flushes active screen and all 10,000 lines of scrollback buffer.
 - **Unicode Wide Characters & Emojis**: Character classification via East Asian Width (`unicodedata.east_asian_width`) for 2-column CJK characters and emojis with sentinel spacer cells.

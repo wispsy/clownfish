@@ -25,6 +25,7 @@ class TerminalPane(tk.Frame):
         config: TerminalConfig | None = None,
         on_focus: Callable[[TerminalPane], None] | None = None,
         on_close: Callable[[TerminalPane], None] | None = None,
+        on_title_change: Callable[[TerminalPane, str], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(master, bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg), **kwargs)
@@ -33,6 +34,7 @@ class TerminalPane(tk.Frame):
         self.rows = rows
         self.on_focus = on_focus
         self.on_close = on_close
+        self.on_title_change = on_title_change
 
         self.session = session or TerminalSession(
             cols=cols,
@@ -297,7 +299,8 @@ class TerminalPane(tk.Frame):
             pass
 
     def _on_title_changed(self, new_title: str) -> None:
-        pass
+        if self.on_title_change:
+            self.on_title_change(self, new_title)
 
     def _on_session_close(self) -> None:
         if self.on_close:

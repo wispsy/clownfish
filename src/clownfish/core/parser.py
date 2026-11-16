@@ -22,9 +22,11 @@ class VT100Parser:
         self,
         screen: ScreenBuffer,
         write_response: Callable[[bytes], None] | None = None,
+        on_title_change: Callable[[str], None] | None = None,
     ):
         self.screen = screen
         self.write_response = write_response
+        self.on_title_change = on_title_change
         self.state = self.STATE_GROUND
         self.params: list[list[int]] = []
         self.current_subparams: list[int] = []
@@ -204,6 +206,10 @@ class VT100Parser:
             self.screen.move_cursor(self.screen.cursor_y, min(self.screen.cols - 1, self.screen.cursor_x + val1))
         elif final == "D":
             self.screen.move_cursor(self.screen.cursor_y, max(0, self.screen.cursor_x - val1))
+        elif final == "E":
+            self.screen.move_cursor(min(self.screen.rows - 1, self.screen.cursor_y + val1), 0)
+        elif final == "F":
+            self.screen.move_cursor(max(0, self.screen.cursor_y - val1), 0)
         elif final == "G":
             self.screen.move_cursor(self.screen.cursor_y, min(self.screen.cols - 1, max(0, val1 - 1)))
         elif final == "d":
@@ -216,10 +222,22 @@ class VT100Parser:
             self.screen.erase_in_display(self._param_zero(0, 0))
         elif final == "K":
             self.screen.erase_in_line(self._param_zero(0, 0))
+        elif final == "L":
+            self.screen.insert_lines(val1)
+        elif final == "M":
+            self.screen.delete_lines(val1)
         elif final == "@":
             self.screen.insert_chars(val1)
         elif final == "P":
             self.screen.delete_chars(val1)
+        elif final == "X":
+            self.screen.erase_chars(val1)
+        elif final == "S":
+            self.screen.scroll_up(val1)
+        elif final == "T":
+            self.screen.scroll_down(val1)
+        elif final == "s":
+            self.screen.save_cursor()
         elif final == "m":
             self.screen.handle_sgr(self.params)
         elif final == "r":
@@ -242,21 +260,24 @@ class VT100Parser:
             elif mode == 5:
                 self._send_response(b"\x1b[0n")
         elif final == "u":
-            first_val = self._param_zero(0, 0)
-            if self.csi_prefix == "?":
-                self._send_response(f"\x1b[?{self.kitty_keyboard_flags}u".encode("ascii"))
-            elif self.csi_prefix == ">":
-                self.kitty_keyboard_stack.append(self.kitty_keyboard_flags)
-                self.kitty_keyboard_flags = first_val
-            elif self.csi_prefix == "<":
-                pop_count = self._param(0, 1)
-                for _ in range(pop_count):
-                    if self.kitty_keyboard_stack:
-                        self.kitty_keyboard_flags = self.kitty_keyboard_stack.pop()
-                    else:
-                        self.kitty_keyboard_flags = 0
-            elif self.csi_prefix == "=":
-                self.kitty_keyboard_flags = first_val
+            if not self.csi_prefix:
+                self.screen.restore_cursor()
+            else:
+                first_val = self._param_zero(0, 0)
+                if self.csi_prefix == "?":
+                    self._send_response(f"\x1b[?{self.kitty_keyboard_flags}u".encode("ascii"))
+                elif self.csi_prefix == ">":
+                    self.kitty_keyboard_stack.append(self.kitty_keyboard_flags)
+                    self.kitty_keyboard_flags = first_val
+                elif self.csi_prefix == "<":
+                    pop_count = self._param(0, 1)
+                    for _ in range(pop_count):
+                        if self.kitty_keyboard_stack:
+                            self.kitty_keyboard_flags = self.kitty_keyboard_stack.pop()
+                        else:
+                            self.kitty_keyboard_flags = 0
+                elif self.csi_prefix == "=":
+                    self.kitty_keyboard_flags = first_val
 
     def _send_response(self, data: bytes):
         if self.write_response:
@@ -283,7 +304,18 @@ class VT100Parser:
                 self.osc_payload += char
 
     def _dispatch_osc(self, payload: str):
-        if payload.startswith("8;"):
+        if payload.startswith(("0;", "2;")):
+            parts = payload.split(";", 1)
+            if len(parts) == 2:
+                title = parts[1]
+                self.screen.title = title
+                if self.on_title_change:
+                    self.on_title_change(title)
+        elif payload.startswith("1;"):
+            parts = payload.split(";", 1)
+            if len(parts) == 2:
+                self.screen.icon_name = parts[1]
+        elif payload.startswith("8;"):
             parts = payload.split(";", 2)
             if len(parts) >= 3:
                 url = parts[2]
