@@ -41,6 +41,17 @@ class Style:
             self.fg, self.bg, self.bold, self.italic, self.underline, self.reverse
         )
 
+    def is_default(self) -> bool:
+        """Return True if style has default foreground, background, and no attributes."""
+        return (
+            self.fg == DEFAULT_FG
+            and self.bg == DEFAULT_BG
+            and not self.bold
+            and not self.italic
+            and not self.underline
+            and not self.reverse
+        )
+
 
 @dataclasses.dataclass(slots=True)
 class Cell:
@@ -50,6 +61,17 @@ class Cell:
     style: Style = dataclasses.field(default_factory=Style)
     url: str | None = None  # OSC 8 Hyperlink target
     width: int = 1  # 1 for regular, 2 for wide lead cell, 0 for wide continuation spacer
+
+
+class Row(list[Cell]):
+    """Physical row of cells with soft-wrap continuation metadata."""
+
+    def __init__(self, cells: list[Cell] | None = None, is_wrapped: bool = False) -> None:
+        super().__init__(cells if cells is not None else [])
+        self.is_wrapped = is_wrapped
+
+    def copy(self) -> Row:
+        return Row([dataclasses.replace(c, style=c.style.copy()) for c in self], is_wrapped=self.is_wrapped)
 
 
 @dataclasses.dataclass

@@ -3,7 +3,7 @@
 from collections import deque
 from typing import ClassVar
 
-from clownfish.core.models import DEFAULT_BG, DEFAULT_FG, Cell, PromptMarker, Style, char_width
+from clownfish.core.models import DEFAULT_BG, DEFAULT_FG, Cell, PromptMarker, Row, Style, char_width
 
 
 class ScreenBuffer:
@@ -33,12 +33,12 @@ class ScreenBuffer:
         self.scroll_bottom = rows - 1
         self.dirty_lines: set[int] = set(range(rows))
 
-        self.primary_grid: list[list[Cell]] = [self._blank_row() for _ in range(rows)]
-        self.scrollback: deque[list[Cell]] = deque(maxlen=max_scrollback)
+        self.primary_grid: list[Row] = [self._blank_row() for _ in range(rows)]
+        self.scrollback: deque[Row] = deque(maxlen=max_scrollback)
         self.scroll_offset = 0
         self.total_lines_scrolled = 0
 
-        self.alt_grid: list[list[Cell]] = [self._blank_row() for _ in range(rows)]
+        self.alt_grid: list[Row] = [self._blank_row() for _ in range(rows)]
         self.is_alt_screen = False
         self._primary_saved_cursor = (0, 0)
         self._primary_saved_style = Style()
@@ -48,11 +48,12 @@ class ScreenBuffer:
         self.title: str = ""
         self.icon_name: str = ""
 
-    def _blank_row(self) -> list[Cell]:
-        return [
-            Cell(style=self.current_style.copy(), url=self.current_url)
-            for _ in range(self.cols)
-        ]
+    def _blank_row(self, cols: int | None = None, is_wrapped: bool = False) -> Row:
+        c = cols if cols is not None else self.cols
+        return Row(
+            [Cell(style=self.current_style.copy(), url=self.current_url) for _ in range(c)],
+            is_wrapped=is_wrapped,
+        )
 
     def mark_all_dirty(self):
         self.dirty_lines.update(range(self.rows))
@@ -121,11 +122,17 @@ class ScreenBuffer:
         if target_idx < 0:
             return self._blank_row()
         elif target_idx < history_len:
-            return self.scrollback[target_idx]
+            row = self.scrollback[target_idx]
+            if len(row) < self.cols:
+                row.extend([Cell(char=" ", style=Style()) for _ in range(self.cols - len(row))])
+            return row
         else:
             grid_idx = target_idx - history_len
             if grid_idx < self.rows:
-                return self.grid[grid_idx]
+                row = self.grid[grid_idx]
+                if len(row) < self.cols:
+                    row.extend([Cell(char=" ", style=Style()) for _ in range(self.cols - len(row))])
+                return row
             return self._blank_row()
 
     def scroll_view(self, delta: int):
@@ -229,6 +236,7 @@ class ScreenBuffer:
 
         # Handle pending autowrap delay when writing the next printable character
         if self.wrap_pending:
+            self.grid[self.cursor_y].is_wrapped = True
             self.cursor_x = 0
             self.cursor_y += 1
             if self.cursor_y > self.scroll_bottom:
@@ -245,6 +253,7 @@ class ScreenBuffer:
                     url=self.current_url,
                     width=1,
                 )
+            self.grid[self.cursor_y].is_wrapped = True
             self.cursor_x = 0
             self.cursor_y += 1
             if self.cursor_y > self.scroll_bottom:
@@ -379,38 +388,17 @@ class ScreenBuffer:
         self.scroll_offset = 0
         self.mark_all_dirty()
 
-    def resize(self, new_cols: int, new_rows: int):
+    def resize(self, new_cols: int, new_rows: int) -> None:
         if new_cols == self.cols and new_rows == self.rows:
             return
 
         self.wrap_pending = False
 
-        def _resize_target(grid: list[list[Cell]], push_to_history: bool = False):
-            if new_rows < self.rows:
-                excess = self.rows - new_rows
-                for _ in range(excess):
-                    if grid:
-                        popped = grid.pop(0)
-                        if push_to_history:
-                            self.scrollback.append(popped)
-                            self.total_lines_scrolled += 1
-            elif new_rows > self.rows:
-                needed = new_rows - self.rows
-                for _ in range(needed):
-                    if push_to_history and self.scrollback:
-                        grid.insert(0, self.scrollback.pop())
-                    else:
-                        grid.append([Cell(style=self.current_style.copy()) for _ in range(new_cols)])
-
-            for r in range(len(grid)):
-                curr_len = len(grid[r])
-                if new_cols > curr_len:
-                    grid[r].extend([Cell(style=self.current_style.copy()) for _ in range(new_cols - curr_len)])
-                elif new_cols < curr_len:
-                    grid[r] = grid[r][:new_cols]
-
-        _resize_target(self.primary_grid, push_to_history=True)
-        _resize_target(self.alt_grid, push_to_history=False)
+        if self.is_alt_screen:
+            self._resize_alt_screen(new_cols, new_rows)
+            self._reflow_primary(new_cols, new_rows)
+        else:
+            self._reflow_primary(new_cols, new_rows)
 
         self.cols = new_cols
         self.rows = new_rows
@@ -419,6 +407,155 @@ class ScreenBuffer:
         self.cursor_x = max(0, min(self.cols - 1, self.cursor_x))
         self.cursor_y = max(0, min(self.rows - 1, self.cursor_y))
         self.mark_all_dirty()
+
+    def _resize_alt_screen(self, new_cols: int, new_rows: int) -> None:
+        """Resize alternate screen grid by padding/clipping without text reflow."""
+        old_rows = self.rows
+
+        for r in range(len(self.alt_grid)):
+            curr_len = len(self.alt_grid[r])
+            if new_cols > curr_len:
+                self.alt_grid[r].extend(
+                    [Cell(style=self.current_style.copy()) for _ in range(new_cols - curr_len)]
+                )
+            elif new_cols < curr_len:
+                self.alt_grid[r] = Row(self.alt_grid[r][:new_cols], is_wrapped=False)
+
+        if new_rows > old_rows:
+            for _ in range(new_rows - old_rows):
+                self.alt_grid.append(self._blank_row(new_cols))
+        elif new_rows < old_rows:
+            self.alt_grid = self.alt_grid[:new_rows]
+
+    def _reflow_primary(self, new_cols: int, new_rows: int) -> None:
+        """Reflow logical lines across scrollback and primary grid into new column width."""
+        all_rows: list[Row] = list(self.scrollback) + list(self.primary_grid)
+        cursor_abs_row = len(self.scrollback) + self.cursor_y
+        cursor_abs_col = self.cursor_x
+
+        # Only reflow up to the last active row with content, cursor, or prompt markers
+        last_active_row = cursor_abs_row
+        for m in self.prompt_markers:
+            last_active_row = max(last_active_row, m.row)
+        for r_idx in range(len(all_rows) - 1, -1, -1):
+            row = all_rows[r_idx]
+            has_content = any(c.char not in (" ", "") or not c.style.is_default() or c.url is not None for c in row)
+            if has_content or row.is_wrapped:
+                last_active_row = max(last_active_row, r_idx)
+                break
+
+        active_rows = all_rows[: last_active_row + 1]
+
+        logical_lines: list[tuple[list[Cell], int | None, list[PromptMarker]]] = []
+        current_cells: list[Cell] = []
+        cursor_offset: int | None = None
+        markers_for_line: list[PromptMarker] = []
+
+        for r_idx, row in enumerate(active_rows):
+            for m in self.prompt_markers:
+                if m.row == r_idx:
+                    markers_for_line.append(m)
+
+            is_cursor_row = (r_idx == cursor_abs_row)
+
+            if row.is_wrapped:
+                if is_cursor_row:
+                    cursor_offset = len(current_cells) + cursor_abs_col
+                current_cells.extend(row)
+            else:
+                last_content = -1
+                for c_idx in range(len(row) - 1, -1, -1):
+                    c = row[c_idx]
+                    if c.char not in (" ", "") or not c.style.is_default() or c.url is not None:
+                        last_content = c_idx
+                        break
+                if is_cursor_row:
+                    last_content = max(last_content, cursor_abs_col)
+
+                content_cells = row[: last_content + 1] if last_content >= 0 else []
+
+                if is_cursor_row:
+                    cursor_offset = len(current_cells) + cursor_abs_col
+
+                current_cells.extend(content_cells)
+
+                logical_lines.append((current_cells, cursor_offset, markers_for_line))
+                current_cells = []
+                cursor_offset = None
+                markers_for_line = []
+
+        if current_cells or cursor_offset is not None or markers_for_line:
+            logical_lines.append((current_cells, cursor_offset, markers_for_line))
+
+        new_all_rows: list[Row] = []
+        new_cursor_abs_row = 0
+        new_cursor_col = 0
+        new_prompt_markers: list[PromptMarker] = []
+
+        for cells, cur_offset, markers in logical_lines:
+            line_start_row = len(new_all_rows)
+
+            for m in markers:
+                m.row = line_start_row
+                new_prompt_markers.append(m)
+
+            if not cells:
+                if cur_offset is not None:
+                    new_cursor_abs_row = len(new_all_rows)
+                    new_cursor_col = 0
+                new_all_rows.append(self._blank_row(new_cols, is_wrapped=False))
+                continue
+
+            idx = 0
+            while idx < len(cells):
+                row_cells: list[Cell] = []
+                while len(row_cells) < new_cols and idx < len(cells):
+                    c = cells[idx]
+                    if c.width == 2 and len(row_cells) == new_cols - 1:
+                        # Cannot fit wide char in last column; pad space and wrap
+                        row_cells.append(Cell(char=" ", style=c.style.copy()))
+                        break
+
+                    if cur_offset is not None and idx == cur_offset:
+                        new_cursor_abs_row = len(new_all_rows)
+                        new_cursor_col = len(row_cells)
+
+                    row_cells.append(c)
+                    idx += 1
+
+                    if idx < len(cells) and cells[idx].width == 0:
+                        if cur_offset is not None and idx == cur_offset:
+                            new_cursor_abs_row = len(new_all_rows)
+                            new_cursor_col = len(row_cells)
+                        row_cells.append(cells[idx])
+                        idx += 1
+
+                if idx < len(cells):
+                    new_all_rows.append(Row(row_cells, is_wrapped=True))
+                else:
+                    if cur_offset is not None and cur_offset >= len(cells):
+                        new_cursor_abs_row = len(new_all_rows)
+                        new_cursor_col = min(len(row_cells), new_cols - 1)
+                    while len(row_cells) < new_cols:
+                        row_cells.append(Cell(char=" ", style=Style()))
+                    new_all_rows.append(Row(row_cells, is_wrapped=False))
+
+        total_new = len(new_all_rows)
+        if total_new >= new_rows:
+            self.primary_grid = new_all_rows[-new_rows:]
+            self.scrollback = deque(new_all_rows[:-new_rows], maxlen=self.scrollback.maxlen)
+            self.cursor_y = max(0, min(new_rows - 1, new_cursor_abs_row - (total_new - new_rows)))
+        else:
+            self.scrollback = deque(maxlen=self.scrollback.maxlen)
+            self.primary_grid = new_all_rows
+            while len(self.primary_grid) < new_rows:
+                self.primary_grid.append(self._blank_row(new_cols, is_wrapped=False))
+            self.cursor_y = max(0, min(new_rows - 1, new_cursor_abs_row))
+
+        self.cursor_x = max(0, min(new_cols - 1, new_cursor_col))
+        self.prompt_markers = new_prompt_markers
+        if not self.is_alt_screen:
+            self.grid = self.primary_grid
 
     def handle_sgr(self, param_groups: list[list[int]]):
         if not param_groups:

@@ -11,6 +11,7 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 ## Features
 
 - **Interactive Login Shells & Job Control**: Launches native user shells (`/bin/zsh`, `/bin/bash`) as login interactive shells (`-l -i`) with controlling terminal allocation (`TIOCSCTTY`), pre-spawn window sizing (`TIOCSWINSZ`), and full POSIX job control (`Ctrl+C`, `Ctrl+Z`, `fg`, `bg`).
+- **Non-Destructive Soft-Wrap Reflow**: Dynamic text reflow (`Row.is_wrapped`) when resizing terminal columns, preserving character buffers, styles, wide glyphs, and cursor positioning without data loss.
 - **Screen-Editing VT Sequences**: Full support for Cursor Next/Previous Line (`CSI E`/`F`), Erase Characters (`CSI X`), Insert/Delete Lines (`CSI L`/`M`), Scroll Up/Down (`CSI S`/`T`), and ANSI Cursor Save/Restore (`CSI s`/`u`).
 - **Prompt Preservation on Clear**: Complete terminal reset (`Cmd+K` / `Ctrl+K`) flushes scrollback while requesting interactive shell redraw (`Ctrl+L`), preserving partially typed command lines.
 - **Dynamic Window & Tab Titles**: Shell `precmd` window and tab title sequences (`OSC 0` and `OSC 2`) update desktop tab headers in real time.

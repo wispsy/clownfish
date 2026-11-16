@@ -105,3 +105,60 @@ def test_live_zsh_tab_completion_no_stray_prompts() -> None:
 
     finally:
         transport.close()
+
+
+def test_session_thread_safety_no_auto_drain() -> None:
+    """Verify that when auto_drain=False, incoming data is not drained on reader thread."""
+    class DummyTransport:
+        def __init__(self) -> None:
+            self.on_data = None
+        def set_callbacks(self, on_data=None, on_close=None):
+            self.on_data = on_data
+        def start(self): pass
+        def write(self, data: bytes): pass
+        def resize(self, cols: int, rows: int): pass
+        def close(self): pass
+        def is_alive(self): return True
+
+    transport = DummyTransport()
+    session = TerminalSession(transport=transport, auto_drain=False)
+    session.start()
+
+    # Simulate data arriving from background thread
+    assert transport.on_data is not None
+    transport.on_data(b"DelayedText\r\n")
+
+    # Screen must NOT have mutated yet
+    assert session.screen.grid[0][0].char == " "
+    assert not session._event_queue.empty()
+
+    # Once UI thread explicitly drains, screen updates
+    session.drain_events()
+    assert session._event_queue.empty()
+    assert "".join(c.char for c in session.screen.grid[0][:11]) == "DelayedText"
+
+
+def test_pty_trampoline_job_control_and_ctty() -> None:
+    """Verify that PTYTransport acquires controlling terminal without preexec_fn."""
+    import sys
+
+    received = bytearray()
+    code = (
+        "import os, sys\n"
+        "sys.stdout.write(f'CTTY:{os.isatty(0)}\\n')\n"
+        "sys.stdout.flush()\n"
+    )
+    transport = PTYTransport(
+        command=[sys.executable, "-c", code],
+        cols=80,
+        rows=24,
+        on_data=lambda d: received.extend(d),
+    )
+    transport.start()
+
+    deadline = time.time() + 3.0
+    while b"CTTY:True" not in received and time.time() < deadline:
+        time.sleep(0.05)
+
+    transport.close()
+    assert b"CTTY:True" in received

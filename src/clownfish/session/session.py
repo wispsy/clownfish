@@ -51,10 +51,12 @@ class TerminalSession:
         on_bell: Callable[[], None] | None = None,
         on_output: Callable[[], None] | None = None,
         on_close: Callable[[], None] | None = None,
+        auto_drain: bool = True,
     ) -> None:
         self.cols = cols
         self.rows = rows
         self.title = title
+        self.auto_drain = auto_drain
 
         self.on_title_changed = on_title_changed
         self.on_bell = on_bell
@@ -121,9 +123,7 @@ class TerminalSession:
         self._event_queue.put(("data", raw_bytes))
         if self._event_notifier is not None:
             self._event_notifier()
-        else:
-            # When no UI event loop notifier is attached (e.g. headless scripts / tests),
-            # auto-drain immediately.
+        elif self.auto_drain:
             self.drain_events()
 
     def _on_transport_close(self) -> None:
@@ -131,7 +131,7 @@ class TerminalSession:
         self._event_queue.put(("close", None))
         if self._event_notifier is not None:
             self._event_notifier()
-        else:
+        elif self.auto_drain:
             self.drain_events()
 
     def feed_text(self, text: str) -> None:
