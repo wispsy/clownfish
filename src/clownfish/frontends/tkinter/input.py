@@ -22,7 +22,7 @@ def is_application_shortcut(event: tk.Event) -> bool:
     sym = event.keysym.lower()
 
     if is_mac and has_cmd:
-        if sym in ("t", "w", "d", "f", "k", "c", "v"):
+        if sym in ("t", "w", "d", "f", "k", "c", "v", "bracketleft", "bracketright", "equal"):
             return True
         if event.keysym in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
             return True
@@ -30,6 +30,9 @@ def is_application_shortcut(event: tk.Event) -> bool:
             return True
 
     if has_ctrl and event.keysym in ("Tab", "ISO_Left_Tab"):
+        return True
+
+    if has_ctrl and sym in ("bracketleft", "bracketright", "equal"):
         return True
 
     if has_ctrl and has_shift and sym in ("t", "w", "d", "f", "k", "c", "v"):

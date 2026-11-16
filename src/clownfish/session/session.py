@@ -22,14 +22,17 @@ def set_default_transport_factory(factory: TransportFactory | None) -> None:
     _default_transport_factory = factory
 
 
-def get_default_transport(cols: int, rows: int) -> Transport:
+def get_default_transport(cols: int, rows: int, cwd: str | None = None) -> Transport:
     """Create a default transport for the current platform."""
     if _default_transport_factory is not None:
-        return _default_transport_factory(cols, rows)
+        try:
+            return _default_transport_factory(cols, rows, cwd)  # type: ignore
+        except TypeError:
+            return _default_transport_factory(cols, rows)
     try:
         from clownfish.transports.pty import PTYTransport
 
-        return PTYTransport(cols=cols, rows=rows)
+        return PTYTransport(cols=cols, rows=rows, cwd=cwd)
     except (ImportError, OSError) as err:
         raise RuntimeError(
             "No default PTY transport available on this platform. "
@@ -52,6 +55,7 @@ class TerminalSession:
         on_output: Callable[[], None] | None = None,
         on_close: Callable[[], None] | None = None,
         auto_drain: bool = True,
+        cwd: str | None = None,
         on_cwd_changed: Callable[[str], None] | None = None,
         on_notification: Callable[[str, str], None] | None = None,
         on_clipboard_write: Callable[[str, str], None] | None = None,
@@ -60,7 +64,7 @@ class TerminalSession:
         self.cols = cols
         self.rows = rows
         self.title = title
-        self.cwd = ""
+        self.cwd = cwd or ""
         self.auto_drain = auto_drain
 
         self.on_title_changed = on_title_changed
@@ -84,7 +88,7 @@ class TerminalSession:
         )
         self.utf8_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
-        self.transport = transport if transport is not None else get_default_transport(cols, rows)
+        self.transport = transport if transport is not None else get_default_transport(cols, rows, cwd=self.cwd or None)
         self.transport.set_callbacks(
             on_data=self._on_transport_data,
             on_close=self._on_transport_close,

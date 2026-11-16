@@ -26,6 +26,7 @@ class TerminalPane(tk.Frame):
         on_focus: Callable[[TerminalPane], None] | None = None,
         on_close: Callable[[TerminalPane], None] | None = None,
         on_title_change: Callable[[TerminalPane, str], None] | None = None,
+        cwd: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(master, bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg), **kwargs)
@@ -43,6 +44,7 @@ class TerminalPane(tk.Frame):
             on_title_changed=self._on_title_changed,
             on_close=self._on_session_close,
             auto_drain=False,
+            cwd=cwd,
         )
         self.session.auto_drain = False
         self.session.on_title_changed = self._on_title_changed
@@ -131,6 +133,7 @@ class TerminalPane(tk.Frame):
     def _bind_events(self) -> None:
         # Focus
         self.canvas.bind("<FocusIn>", self._on_focus_in)
+        self.canvas.bind("<FocusOut>", self._on_focus_out)
 
         # Mouse & Pointer Interactions
         self.canvas.bind("<Button-1>", self._on_button_1_press)
@@ -150,8 +153,18 @@ class TerminalPane(tk.Frame):
         self.bind("<Configure>", self._on_configure)
 
     def _on_focus_in(self, event: tk.Event | None = None) -> None:
+        try:
+            self.canvas.config(highlightbackground="#4a90e2", highlightcolor="#4a90e2")
+        except tk.TclError:
+            pass
         if self.on_focus:
             self.on_focus(self)
+
+    def _on_focus_out(self, event: tk.Event | None = None) -> None:
+        try:
+            self.canvas.config(highlightbackground="#2a2a32", highlightcolor="#2a2a32")
+        except tk.TclError:
+            pass
 
     def focus(self) -> None:
         """Focus the terminal canvas."""
