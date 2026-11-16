@@ -10,6 +10,7 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **Split Navigation & Desktop Ergonomics**: Fast split pane keyboard cycling (`Cmd+[` / `Cmd+]` or `Ctrl+[` / `Ctrl+]`), split equalization (`Cmd+=` / `Ctrl+=`), high-contrast active-pane visual border highlight (`#4a90e2`), and automatic current working directory inheritance on new tabs (`Cmd+T`) and split panes (`Cmd+D`).
 - **High-Throughput PTY Batching & Idle Throttling**: Bounded PTY event processing (`drain_events(max_bytes=512_000)`) with adaptive tick rate (`after(1)` for pending stream bursts, `after(16)` for interactive typing) and cursor state caching to eliminate canvas churn when idle.
 - **Security & OSC Integrations**: Base64 clipboard get/set (`OSC 52`) with size-bounded payload decoding, current working directory tracking (`OSC 7`), strict allowlisted URL scheme validation for hyperlinks (`OSC 8`), and desktop notifications (`OSC 9` and `OSC 777`).
 - **Unicode Grapheme Clusters & Complex Emojis**: Support for Zero-Width Joiner (ZWJ, `\u200D`) connected emoji sequences (e.g. `👩‍💻`), Fitzpatrick skin tone modifiers, regional indicator flag pairs (`🇯🇵`), and extended emoji/symbol pictographs in monospace terminal grid math.

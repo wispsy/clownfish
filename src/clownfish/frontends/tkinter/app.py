@@ -132,6 +132,10 @@ class TkTerminalApp:
             self.root.bind("<Command-k>", lambda e: self._clear_screen())
             self.root.bind("<Command-c>", self._copy_selection_to_clipboard)
             self.root.bind("<Command-v>", self._paste_from_clipboard)
+            self.root.bind("<Command-bracketleft>", lambda e: self._prev_split())
+            self.root.bind("<Command-bracketright>", lambda e: self._next_split())
+            self.root.bind("<Command-equal>", lambda e: self._equalize_splits())
+            self.root.bind("<Command-plus>", lambda e: self._equalize_splits())
             self.root.bind("<Command-Up>", lambda e: self._jump_prompt(-1))
             self.root.bind("<Command-Down>", lambda e: self._jump_prompt(1))
         else:
@@ -145,6 +149,10 @@ class TkTerminalApp:
             self.root.bind("<Control-Shift-c>", self._copy_selection_to_clipboard)
             self.root.bind("<Control-Shift-V>", self._paste_from_clipboard)
             self.root.bind("<Control-Shift-v>", self._paste_from_clipboard)
+            self.root.bind("<Control-bracketleft>", lambda e: self._prev_split())
+            self.root.bind("<Control-bracketright>", lambda e: self._next_split())
+            self.root.bind("<Control-equal>", lambda e: self._equalize_splits())
+            self.root.bind("<Control-plus>", lambda e: self._equalize_splits())
 
         self.root.bind("<Control-Up>", lambda e: self._jump_prompt(-1))
         self.root.bind("<Control-Down>", lambda e: self._jump_prompt(1))
@@ -192,6 +200,24 @@ class TkTerminalApp:
         sv = self.tab_view.active_split_view
         if sv:
             sv.split_vertical(self.active_pane)
+        return "break"
+
+    def _next_split(self) -> str:
+        sv = self.tab_view.active_split_view
+        if sv:
+            sv.focus_next_pane()
+        return "break"
+
+    def _prev_split(self) -> str:
+        sv = self.tab_view.active_split_view
+        if sv:
+            sv.focus_prev_pane()
+        return "break"
+
+    def _equalize_splits(self) -> str:
+        sv = self.tab_view.active_split_view
+        if sv:
+            sv.equalize_splits()
         return "break"
 
     def _toggle_search(self) -> str:

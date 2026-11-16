@@ -75,10 +75,13 @@ class TabbedTerminalView(tk.Frame):
         sv = self.active_split_view
         return sv.active_pane if sv else None
 
-    def new_tab(self, title: str | None = None) -> SplitView:
-        """Create and switch to a new tab."""
+    def new_tab(self, title: str | None = None, cwd: str | None = None) -> SplitView:
+        """Create and switch to a new tab, inheriting CWD from active pane if available."""
         tab_idx = len(self.tabs) + 1
         tab_title = title or f"Terminal {tab_idx}"
+        target_cwd = cwd
+        if target_cwd is None and self.active_pane and getattr(self.active_pane, "session", None) and self.active_pane.session.cwd:
+            target_cwd = self.active_pane.session.cwd
 
         split_view = SplitView(
             self.content_frame,
@@ -86,6 +89,7 @@ class TabbedTerminalView(tk.Frame):
             on_pane_focus=self._on_pane_focused,
             on_pane_close=self._on_pane_closed,
             on_pane_title=self._on_pane_title_changed,
+            cwd=target_cwd,
         )
 
         self.tabs.append((tab_title, split_view))
