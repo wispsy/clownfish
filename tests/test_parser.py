@@ -157,4 +157,82 @@ def test_parser_oversized_string_and_osc_st_termination():
     assert "".join(c.char for c in screen.grid[1][:8]) == "AfterOSC"
 
 
+def test_parser_screen_editing_csi_commands():
+    screen = ScreenBuffer(cols=20, rows=10)
+    parser = VT100Parser(screen)
+
+    # 1. Cursor Next Line (CSI E) and Cursor Previous Line (CSI F)
+    screen.move_cursor(2, 5)
+    parser.feed("\x1b[2E")  # Move down 2 lines to column 0
+    assert screen.cursor_y == 4
+    assert screen.cursor_x == 0
+
+    screen.move_cursor(5, 8)
+    parser.feed("\x1b[3F")  # Move up 3 lines to column 0
+    assert screen.cursor_y == 2
+    assert screen.cursor_x == 0
+
+    # 2. Erase Characters (CSI X / ECH)
+    screen.move_cursor(0, 0)
+    parser.feed("ABCDEFGHIJ")
+    screen.move_cursor(0, 2)
+    parser.feed("\x1b[4X")  # Erase 4 chars starting at index 2 without shifting
+    row_text = "".join(c.char for c in screen.grid[0][:10])
+    assert row_text == "AB    GHIJ"
+    assert screen.cursor_x == 2  # Cursor position unchanged
+
+    # 3. Insert Lines (CSI L) and Delete Lines (CSI M)
+    screen.clear_all()
+    for i in range(5):
+        screen.move_cursor(i, 0)
+        parser.feed(f"Line {i}")
+    screen.move_cursor(2, 0)
+    parser.feed("\x1b[1L")  # Insert blank line at line 2
+    assert "".join(c.char for c in screen.grid[1][:6]) == "Line 1"
+    assert "".join(c.char for c in screen.grid[2][:6]).strip() == ""
+    assert "".join(c.char for c in screen.grid[3][:6]) == "Line 2"
+
+    screen.move_cursor(2, 0)
+    parser.feed("\x1b[1M")  # Delete line 2
+    assert "".join(c.char for c in screen.grid[2][:6]) == "Line 2"
+
+    # 4. Scroll Up (CSI S) and Scroll Down (CSI T)
+    parser.feed("\x1b[1S")  # Scroll up 1
+    assert "".join(c.char for c in screen.grid[1][:6]) == "Line 2"
+    parser.feed("\x1b[1T")  # Scroll down 1
+    assert "".join(c.char for c in screen.grid[2][:6]) == "Line 2"
+
+    # 5. ANSI Save Cursor (CSI s) and Restore Cursor (CSI u)
+    screen.move_cursor(7, 14)
+    parser.feed("\x1b[s")  # Save cursor
+    screen.move_cursor(0, 0)
+    parser.feed("\x1b[u")  # Restore cursor
+    assert screen.cursor_y == 7
+    assert screen.cursor_x == 14
+
+
+def test_parser_osc_title_updates():
+    screen = ScreenBuffer(cols=20, rows=10)
+    captured_titles: list[str] = []
+
+    def on_title(title: str) -> None:
+        captured_titles.append(title)
+
+    parser = VT100Parser(screen, on_title_change=on_title)
+
+    # OSC 0: icon & window title (BEL terminated)
+    parser.feed("\x1b]0;My Shell Title\x07")
+    assert screen.title == "My Shell Title"
+    assert captured_titles[-1] == "My Shell Title"
+
+    # OSC 2: window title (ST terminated)
+    parser.feed("\x1b]2;Updated Title\x1b\\")
+    assert screen.title == "Updated Title"
+    assert captured_titles[-1] == "Updated Title"
+
+    # OSC 1: icon name
+    parser.feed("\x1b]1;Icon\x07")
+    assert screen.icon_name == "Icon"
+
+
 

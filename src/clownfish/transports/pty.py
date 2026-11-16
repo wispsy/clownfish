@@ -9,6 +9,7 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import termios
 import threading
 from collections import deque
@@ -52,13 +53,30 @@ class PTYTransport(Transport):
 
         master_fd, slave_fd = pty.openpty()
 
+        # Set initial terminal dimensions on slave_fd BEFORE spawning the child
+        try:
+            winsize = struct.pack("HHHH", self.rows, self.cols, self.cols * 8, self.rows * 16)
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+        except OSError:
+            pass
+
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         if self.env:
             env.update(self.env)
 
-        cmd = self.command or [env.get("SHELL", "/bin/sh")]
+        if self.command:
+            cmd = self.command
+        else:
+            shell = env.get("SHELL") or ("/bin/zsh" if sys.platform == "darwin" else "/bin/bash")
+            cmd = [shell, "-l", "-i"]
+
+        def _setup_ctty() -> None:
+            try:
+                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+            except OSError:
+                pass
 
         try:
             proc = subprocess.Popen(
@@ -70,6 +88,7 @@ class PTYTransport(Transport):
                 env=env,
                 close_fds=True,
                 start_new_session=True,
+                preexec_fn=_setup_ctty,  # noqa: PLW1509 - TIOCSCTTY required for BSD/macOS job control
             )
         except OSError:
             os.close(master_fd)
@@ -182,9 +201,13 @@ class PTYTransport(Transport):
             except OSError:
                 pass
             try:
-                proc.poll()
-            except OSError:
-                pass
+                proc.wait(timeout=0.2)
+            except (subprocess.TimeoutExpired, OSError):
+                try:
+                    proc.kill()
+                    proc.wait(timeout=0.2)
+                except OSError:
+                    pass
 
     def is_alive(self) -> bool:
         """Check if child process is alive."""

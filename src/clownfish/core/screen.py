@@ -45,6 +45,8 @@ class ScreenBuffer:
 
         self.grid = self.primary_grid
         self.prompt_markers: list[PromptMarker] = []
+        self.title: str = ""
+        self.icon_name: str = ""
 
     def _blank_row(self) -> list[Cell]:
         return [
@@ -339,6 +341,43 @@ class ScreenBuffer:
                 self.grid[y].pop(x)
                 self.grid[y].append(Cell(style=self.current_style.copy(), url=self.current_url))
         self.dirty_lines.add(y)
+
+    def erase_chars(self, count: int = 1) -> None:
+        """Erase characters from current cursor position without shifting (CSI X / ECH)."""
+        self.wrap_pending = False
+        y, x = self.cursor_y, self.cursor_x
+        end_x = min(self.cols, x + max(1, count))
+        for col in range(x, end_x):
+            self.grid[y][col] = Cell(char=" ", style=self.current_style.copy(), url=self.current_url)
+        self.dirty_lines.add(y)
+
+    def insert_lines(self, count: int = 1) -> None:
+        """Insert blank lines at cursor line within scroll region (CSI L / IL)."""
+        self.wrap_pending = False
+        if not (self.scroll_top <= self.cursor_y <= self.scroll_bottom):
+            return
+        count = min(count, self.scroll_bottom - self.cursor_y + 1)
+        for _ in range(count):
+            self.grid.insert(self.cursor_y, self._blank_row())
+            del self.grid[self.scroll_bottom + 1]
+        self.mark_all_dirty()
+
+    def delete_lines(self, count: int = 1) -> None:
+        """Delete lines at cursor line within scroll region (CSI M / DL)."""
+        self.wrap_pending = False
+        if not (self.scroll_top <= self.cursor_y <= self.scroll_bottom):
+            return
+        count = min(count, self.scroll_bottom - self.cursor_y + 1)
+        for _ in range(count):
+            del self.grid[self.cursor_y]
+            self.grid.insert(self.scroll_bottom, self._blank_row())
+        self.mark_all_dirty()
+
+    def clear_saved_lines(self) -> None:
+        """Clear scrollback history without modifying visible screen."""
+        self.scrollback.clear()
+        self.scroll_offset = 0
+        self.mark_all_dirty()
 
     def resize(self, new_cols: int, new_rows: int):
         if new_cols == self.cols and new_rows == self.rows:

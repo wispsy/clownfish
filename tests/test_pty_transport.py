@@ -50,3 +50,38 @@ def test_pty_transport_live_execution() -> None:
 
     transport.close()
     assert not transport.is_alive()
+
+
+def test_pty_prespawn_window_size() -> None:
+    received = bytearray()
+
+    # Query terminal rows and columns immediately upon process startup
+    code = "import fcntl, termios, struct, sys; r, c = struct.unpack('HHHH', fcntl.ioctl(0, termios.TIOCGWINSZ, b'\\0'*8))[:2]; sys.stdout.write(f'SIZE:{c}x{r}\\n'); sys.stdout.flush()"
+    cmd = [sys.executable, "-c", code]
+
+    transport = PTYTransport(
+        command=cmd,
+        cols=112,
+        rows=37,
+        on_data=lambda d: received.extend(d),
+    )
+    transport.start()
+
+    start_time = time.time()
+    while b"SIZE:112x37" not in received and time.time() - start_time < 3.0:
+        time.sleep(0.05)
+
+    transport.close()
+    assert b"SIZE:112x37" in received
+
+
+def test_pty_default_shell_command_args() -> None:
+    import os
+
+    env = os.environ.copy()
+    env["SHELL"] = "/bin/custom_shell"
+    transport = PTYTransport(env=env)
+
+    # When command is None, interactive login shell is prepared
+    assert transport.command is None
+

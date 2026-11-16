@@ -158,6 +158,7 @@ def test_session_resize_and_clear() -> None:
     assert session.screen.cursor_x == 0
     assert session.screen.cursor_y == 0
     assert len(session.screen.scrollback) == 0
+    assert transport.written_bytes[-1] == b"\x0c"
 
 
 def test_session_close() -> None:
@@ -243,4 +244,4 @@ def test_public_exports() -> None:
     assert hasattr(clownfish, "PTYTransport")
     assert hasattr(clownfish, "SSHTransport")
     assert hasattr(clownfish, "TerminalConfig")
-    assert clownfish.__version__ == "0.4.1"
+    assert clownfish.__version__ == "0.4.2"
