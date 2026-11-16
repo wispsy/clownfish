@@ -232,13 +232,33 @@ class ScreenBuffer:
 
     def put_char(self, char: str):
         w = char_width(char)
+        prev_x = max(0, self.cursor_x - 1)
+        target_cell = self.grid[self.cursor_y][prev_x]
+        if target_cell.width == 0 and prev_x > 0:
+            target_cell = self.grid[self.cursor_y][prev_x - 1]
+
         if w == 0:
             # Combining character or zero-width: attach to previous cell
-            prev_x = max(0, self.cursor_x - 1)
-            target_cell = self.grid[self.cursor_y][prev_x]
-            if target_cell.width == 0 and prev_x > 0:
-                target_cell = self.grid[self.cursor_y][prev_x - 1]
             target_cell.char += char
+            self.dirty_lines.add(self.cursor_y)
+            return
+
+        # Check if previous cell ended with ZWJ (\u200D) - ZWJ continuation sequence
+        if target_cell.char and target_cell.char.endswith("\u200d"):
+            target_cell.char += char
+            self.dirty_lines.add(self.cursor_y)
+            return
+
+        # Check for Regional Indicator flag pairing (e.g. 🇯 + 🇵)
+        if (
+            len(char) == 1
+            and 0x1F1E6 <= ord(char) <= 0x1F1FF
+            and target_cell.char
+            and len(target_cell.char) == 1
+            and 0x1F1E6 <= ord(target_cell.char) <= 0x1F1FF
+        ):
+            target_cell.char += char
+            target_cell.width = 2
             self.dirty_lines.add(self.cursor_y)
             return
 
@@ -580,6 +600,8 @@ class ScreenBuffer:
                 self.primary_grid.append(self._blank_row(new_cols, is_wrapped=False))
             self.cursor_y = max(0, min(new_rows - 1, new_cursor_abs_row))
 
+        self.total_lines_scrolled = len(self.scrollback)
+        self.scroll_offset = max(0, min(len(self.scrollback), self.scroll_offset))
         self.cursor_x = max(0, min(new_cols - 1, new_cursor_col))
         self.prompt_markers = new_prompt_markers
         if not self.is_alt_screen:

@@ -10,6 +10,7 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **Unicode Grapheme Clusters & Complex Emojis**: Support for Zero-Width Joiner (ZWJ, `\u200D`) connected emoji sequences (e.g. `👩‍💻`), Fitzpatrick skin tone modifiers, regional indicator flag pairs (`🇯🇵`), and extended emoji/symbol pictographs in monospace terminal grid math.
 - **VT/xterm & Keyboard Conformance**: Full F1–F12 function key encoding, standard xterm modified navigation keys (`Ctrl/Alt/Shift + Arrows/Home/End/PageUp/PageDown`), DECOM Origin Mode (`?6h`/`?6l`), DECAWM Auto-wrap Mode (`?7h`/`?7l`), DECSCUSR cursor styles (block, underline, bar), and DEC Mode 2026 Synchronized Output for tear-free rendering.
 - **Mouse Motion Reporting**: Button motion tracking (`?1002h`) and any-event motion tracking (`?1003h`) alongside standard press/release (`?1000h`) and SGR format (`?1006h`).
 - **Interactive Login Shells & Job Control**: Launches native user shells (`/bin/zsh`, `/bin/bash`) as login interactive shells (`-l -i`) with controlling terminal allocation (`TIOCSCTTY`), pre-spawn window sizing (`TIOCSWINSZ`), and full POSIX job control (`Ctrl+C`, `Ctrl+Z`, `fg`, `bg`).
