@@ -81,6 +81,19 @@ flowchart TD
   - Interactive OpenSSH client transport allocating a remote pseudo-terminal (`ssh -tt`).
 
 ### 4. Desktop Frontend (`clownfish.frontends.tkinter`)
-- **`TkCanvasRenderer`**: Canvas rendering pipeline with font metrics, dirty row caching, contiguous cell span batching, and selection highlighting.
+- **`TkTerminalApp`**: Root application controller coordinating multi-tab views, window resizing, global shortcuts (`Cmd+T`, `Cmd+W`, `Cmd+K`, `Cmd+D`, etc.), active job close confirmations, and safe multiline paste prompts.
+- **`TabbedTerminalView`**: Manages independent terminal tabs with a custom tab bar, tab switching, and working-directory inheritance.
+- **`SplitView`**: Manages arbitrary nested horizontal and vertical panes with resizable sash dividers, split cycling (`Cmd+[` / `Cmd+]` or `Alt+[` / `Alt+]`), split equalization (`Cmd+=` / `Ctrl+=`), and active pane border highlights (`#4a90e2`).
+- **`TerminalPane`**: Embeds a `TerminalSession`, `TkCanvasRenderer`, `TkInputHandler`, and search overlay bar. Features adaptive render ticks (1ms bursts, 16ms interactive, 100ms idle/hidden tabs) and DECSET 1004 focus reporting.
+- **`TkCanvasRenderer`**: Canvas rendering pipeline with font metrics, dirty row caching, contiguous cell span batching, and z-ordered selection/search highlighting behind legible text.
 - **`TkInputHandler`**: Translates mouse selection (single, double word, triple line), hyperlink clicks, mouse wheel scrolling, and keyboard events into session actions.
-- **`TkTerminalApp`**: Main Tkinter window coordinating session lifecycle, window resizing, shortcuts (`Cmd+K`, `Cmd+C`, `Cmd+V`, `Cmd+Up/Down`), and main thread event draining.
+
+---
+
+## Security & Protocol Conformance
+
+- **OSC 52 Clipboard Isolation**: Reading the host clipboard via OSC 52 query is disabled by default (`allow_clipboard_read = False`) to protect sensitive user credentials from unauthorized remote reads (e.g. over SSH). Writing to clipboard remains permitted by default and configurable (`allow_clipboard_write`).
+- **OSC 7 Working Directory Validation**: OSC 7 URI hostnames are strictly validated against local hostnames (`localhost`, `127.0.0.1`, local nodename), and directory paths must exist locally before being accepted. Invalid or remote directories automatically fall back to the user's home directory.
+- **Defensive Parser Bounds**: CSI parameters are bounded to 32 digits, 64 parameter groups, and 16 subparameters. OSC and DCS strings are bounded to 8,192 bytes to defend against memory exhaustion and integer conversion denial-of-service.
+- **PTY Backpressure & Packaging Trampoline**: Both incoming event queues (4,096 items) and outgoing write queues (1,000 chunks) have bounded limits. The PTY launcher includes a `--pty-trampoline` entrypoint compatible with PyInstaller-frozen `.app` bundles where `sys.executable` is not a Python interpreter.
+- **Job Control & Safe Teardown**: Active foreground jobs are detected via `os.tcgetpgrp(master_fd)` to prompt for user confirmation before terminating running processes during tab or window close. Safe multiline paste protects against accidental execution of newline-separated shell commands.

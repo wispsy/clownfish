@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from collections.abc import Callable
+from pathlib import Path
 
 from clownfish.config import TerminalConfig
 from clownfish.frontends.tkinter.pane import TerminalPane
@@ -82,6 +84,8 @@ class TabbedTerminalView(tk.Frame):
         target_cwd = cwd
         if target_cwd is None and self.active_pane and getattr(self.active_pane, "session", None) and self.active_pane.session.cwd:
             target_cwd = self.active_pane.session.cwd
+        if target_cwd and not os.path.isdir(target_cwd):
+            target_cwd = str(Path.home())
 
         split_view = SplitView(
             self.content_frame,

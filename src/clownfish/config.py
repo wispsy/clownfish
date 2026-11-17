@@ -30,6 +30,10 @@ class TerminalConfig:
     tab_active_bg: str = "#282830"
     tab_fg: str = "#a0a0a8"
     tab_active_fg: str = "#ffffff"
+    allow_clipboard_read: bool = False
+    allow_clipboard_write: bool = True
+    confirm_close_active_process: bool = True
+    confirm_multiline_paste: bool = False
 
     @staticmethod
     def default_config_path() -> Path:

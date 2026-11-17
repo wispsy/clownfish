@@ -2,6 +2,8 @@
 
 import base64
 import binascii
+import os
+import socket
 import urllib.parse
 from collections.abc import Callable
 
@@ -20,6 +22,9 @@ class VT100Parser:
 
     MAX_OSC_LENGTH: int = 8192
     MAX_STRING_LENGTH: int = 8192
+    MAX_PARAM_DIGITS: int = 32
+    MAX_PARAMS: int = 64
+    MAX_SUBPARAMS: int = 16
 
     def __init__(
         self,
@@ -30,6 +35,7 @@ class VT100Parser:
         on_notification: Callable[[str, str], None] | None = None,
         on_clipboard_write: Callable[[str, str], None] | None = None,
         on_clipboard_query: Callable[[str], str] | None = None,
+        on_bell: Callable[[], None] | None = None,
     ):
         self.screen = screen
         self.write_response = write_response
@@ -38,6 +44,7 @@ class VT100Parser:
         self.on_notification = on_notification
         self.on_clipboard_write = on_clipboard_write
         self.on_clipboard_query = on_clipboard_query
+        self.on_bell = on_bell
         self.state = self.STATE_GROUND
         self.params: list[list[int]] = []
         self.current_subparams: list[int] = []
@@ -59,6 +66,7 @@ class VT100Parser:
         self.sgr_mouse_mode = False       # ?1006h (SGR decimal format)
         self.kitty_keyboard_flags = 0
         self.kitty_keyboard_stack: list[int] = []
+        self.focus_reporting = False
 
     def feed(self, text: str):
         for char in text:
@@ -76,6 +84,9 @@ class VT100Parser:
     def _handle_ground(self, char: str):
         if char == "\x1b":
             self.state = self.STATE_ESCAPE
+        elif char == "\x07":
+            if self.on_bell:
+                self.on_bell()
         elif char == "\r":
             self.screen.cursor_x = 0
             self.screen.wrap_pending = False
@@ -158,21 +169,28 @@ class VT100Parser:
             elif char == ">":
                 self.secondary_da = True
         elif "0" <= char <= "9":
-            self.current_param += char
+            if len(self.current_param) < self.MAX_PARAM_DIGITS:
+                self.current_param += char
         elif char == ":":
-            self.current_subparams.append(int(self.current_param) if self.current_param else 0)
+            if len(self.current_subparams) < self.MAX_SUBPARAMS:
+                self.current_subparams.append(int(self.current_param) if self.current_param else 0)
             self.current_param = ""
         elif char == ";":
-            self.current_subparams.append(int(self.current_param) if self.current_param else 0)
-            self.params.append(self.current_subparams)
+            if len(self.current_subparams) < self.MAX_SUBPARAMS:
+                self.current_subparams.append(int(self.current_param) if self.current_param else 0)
+            if len(self.params) < self.MAX_PARAMS:
+                self.params.append(self.current_subparams)
             self.current_subparams = []
             self.current_param = ""
         elif 0x20 <= ord(char) <= 0x2F:
-            self.intermediate_bytes += char
+            if len(self.intermediate_bytes) < 16:
+                self.intermediate_bytes += char
         elif 0x40 <= ord(char) <= 0x7E:
             if self.current_param or self.current_subparams or not self.params:
-                self.current_subparams.append(int(self.current_param) if self.current_param else 0)
-                self.params.append(self.current_subparams)
+                if len(self.current_subparams) < self.MAX_SUBPARAMS:
+                    self.current_subparams.append(int(self.current_param) if self.current_param else 0)
+                if len(self.params) < self.MAX_PARAMS:
+                    self.params.append(self.current_subparams)
             self._dispatch_csi(char)
             self.state = self.STATE_GROUND
 
@@ -214,6 +232,8 @@ class VT100Parser:
                 elif mode == 1003:
                     self.mouse_tracking = enable
                     self.mouse_all_motion = enable
+                elif mode == 1004:
+                    self.focus_reporting = enable
                 elif mode == 1006:
                     self.sgr_mouse_mode = enable
                 elif mode == 2004:
@@ -312,7 +332,13 @@ class VT100Parser:
                         else:
                             self.kitty_keyboard_flags = 0
                 elif self.csi_prefix == "=":
-                    self.kitty_keyboard_flags = first_val
+                    mode = self._param(1, 1)
+                    if mode == 1:
+                        self.kitty_keyboard_flags = first_val
+                    elif mode == 2:
+                        self.kitty_keyboard_flags |= first_val
+                    elif mode == 3:
+                        self.kitty_keyboard_flags &= ~first_val
 
     def _send_response(self, data: bytes):
         if self.write_response:
@@ -354,14 +380,31 @@ class VT100Parser:
             parts = payload.split(";", 1)
             if len(parts) == 2:
                 uri = parts[1]
+                path: str | None = None
                 if uri.startswith("file://"):
                     parsed = urllib.parse.urlparse(uri)
-                    path = urllib.parse.unquote(parsed.path)
+                    allowed_hosts = {"", "localhost", "127.0.0.1"}
+                    try:
+                        allowed_hosts.add(socket.gethostname().lower())
+                    except OSError:
+                        pass
+                    try:
+                        allowed_hosts.add(os.uname().nodename.lower())
+                    except (AttributeError, OSError):
+                        pass
+                    netloc = (parsed.netloc or "").split("@")[-1].split(":")[0].lower()
+                    if netloc in allowed_hosts:
+                        candidate = urllib.parse.unquote(parsed.path)
+                        if os.path.isdir(candidate):
+                            path = candidate
                 else:
-                    path = urllib.parse.unquote(uri)
-                self.screen.cwd = path
-                if self.on_cwd_change:
-                    self.on_cwd_change(path)
+                    candidate = urllib.parse.unquote(uri)
+                    if os.path.isdir(candidate):
+                        path = candidate
+                if path:
+                    self.screen.cwd = path
+                    if self.on_cwd_change:
+                        self.on_cwd_change(path)
         elif payload.startswith("8;"):
             parts = payload.split(";", 2)
             if len(parts) >= 3:

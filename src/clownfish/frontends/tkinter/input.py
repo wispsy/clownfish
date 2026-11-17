@@ -32,7 +32,10 @@ def is_application_shortcut(event: tk.Event) -> bool:
     if has_ctrl and event.keysym in ("Tab", "ISO_Left_Tab"):
         return True
 
-    if has_ctrl and sym in ("bracketleft", "bracketright", "equal"):
+    if has_alt and sym in ("bracketleft", "bracketright"):
+        return True
+
+    if has_ctrl and sym in ("equal",):
         return True
 
     if has_ctrl and has_shift and sym in ("t", "w", "d", "f", "k", "c", "v"):

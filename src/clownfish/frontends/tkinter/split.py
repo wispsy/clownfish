@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from collections.abc import Callable
+from pathlib import Path
 
 from clownfish.config import TerminalConfig
 from clownfish.frontends.tkinter.pane import TerminalPane
@@ -33,7 +35,10 @@ class SplitView(tk.Frame):
         self.active_pane: TerminalPane | None = None
 
         # Create initial primary pane
-        initial_pane = self._create_pane(self, cwd=cwd)
+        initial_cwd = cwd
+        if initial_cwd and not os.path.isdir(initial_cwd):
+            initial_cwd = str(Path.home())
+        initial_pane = self._create_pane(self, cwd=initial_cwd)
         initial_pane.pack(fill=tk.BOTH, expand=True)
         self._panes.append(initial_pane)
         self.active_pane = initial_pane
@@ -74,6 +79,8 @@ class SplitView(tk.Frame):
             if target and getattr(target, "session", None) and target.session.cwd
             else (self.active_pane.session.cwd if self.active_pane and getattr(self.active_pane, "session", None) else None)
         )
+        if target_cwd and not os.path.isdir(target_cwd):
+            target_cwd = str(Path.home())
         if target is None:
             new_pane = self._create_pane(self, cwd=target_cwd)
             new_pane.pack(fill=tk.BOTH, expand=True)

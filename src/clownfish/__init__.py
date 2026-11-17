@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.4.8"
+__version__ = "0.4.9"
 __all__ = [
     "Cell",
     "PTYTransport",
@@ -85,8 +85,23 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def main() -> None:
+def main(args: list[str] | None = None) -> None:
     """Launch clownfish terminal emulator."""
+    import sys
+
+    argv = args if args is not None else sys.argv[1:]
+    if argv and argv[0] == "--pty-trampoline":
+        import fcntl
+        import os
+        import termios
+
+        try:
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+        except OSError:
+            pass
+        os.execvp(argv[1], argv[1:])
+        return
+
     import tkinter as tk
 
     from clownfish.frontends.tkinter.app import TkTerminalApp

@@ -476,11 +476,19 @@ class ScreenBuffer:
         elif new_rows < old_rows:
             self.alt_grid = self.alt_grid[:new_rows]
 
+        if self.is_alt_screen:
+            self.grid = self.alt_grid
+
     def _reflow_primary(self, new_cols: int, new_rows: int) -> None:
         """Reflow logical lines across scrollback and primary grid into new column width."""
         all_rows: list[Row] = list(self.scrollback) + list(self.primary_grid)
-        cursor_abs_row = len(self.scrollback) + self.cursor_y
-        cursor_abs_col = self.cursor_x
+        if self.is_alt_screen:
+            p_x, p_y = self._primary_saved_cursor
+            cursor_abs_row = len(self.scrollback) + p_y
+            cursor_abs_col = p_x
+        else:
+            cursor_abs_row = len(self.scrollback) + self.cursor_y
+            cursor_abs_col = self.cursor_x
 
         # Only reflow up to the last active row with content, cursor, or prompt markers
         last_active_row = cursor_abs_row
@@ -593,17 +601,23 @@ class ScreenBuffer:
         if total_new >= new_rows:
             self.primary_grid = new_all_rows[-new_rows:]
             self.scrollback = deque(new_all_rows[:-new_rows], maxlen=self.scrollback.maxlen)
-            self.cursor_y = max(0, min(new_rows - 1, new_cursor_abs_row - (total_new - new_rows)))
+            prim_y = max(0, min(new_rows - 1, new_cursor_abs_row - (total_new - new_rows)))
         else:
             self.scrollback = deque(maxlen=self.scrollback.maxlen)
             self.primary_grid = new_all_rows
             while len(self.primary_grid) < new_rows:
                 self.primary_grid.append(self._blank_row(new_cols, is_wrapped=False))
-            self.cursor_y = max(0, min(new_rows - 1, new_cursor_abs_row))
+            prim_y = max(0, min(new_rows - 1, new_cursor_abs_row))
+
+        prim_x = max(0, min(new_cols - 1, new_cursor_col))
+        if self.is_alt_screen:
+            self._primary_saved_cursor = (prim_x, prim_y)
+        else:
+            self.cursor_y = prim_y
+            self.cursor_x = prim_x
 
         self.total_lines_scrolled = len(self.scrollback)
         self.scroll_offset = max(0, min(len(self.scrollback), self.scroll_offset))
-        self.cursor_x = max(0, min(new_cols - 1, new_cursor_col))
         self.prompt_markers = new_prompt_markers
         if not self.is_alt_screen:
             self.grid = self.primary_grid
