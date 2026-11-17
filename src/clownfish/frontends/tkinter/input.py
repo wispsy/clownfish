@@ -14,10 +14,16 @@ from clownfish.session.session import TerminalSession
 def is_application_shortcut(event: tk.Event) -> bool:
     """Return True if event represents an application-level menu/tab/window shortcut."""
     is_mac = sys.platform == "darwin"
-    has_cmd = is_mac and bool(event.state & 0x18 or event.state & 0x48 or event.state & 0x40)
     has_ctrl = bool(event.state & 0x4)
     has_shift = bool(event.state & 0x1)
-    has_alt = bool(event.state & 0x8 or event.state & 0x80)
+    if is_mac:
+        # On macOS TkAqua: Command is Mod1 (0x8), Option is Mod2 (0x10).
+        # 0x40 is the hardware Fn/Arrow key flag and must not trigger has_cmd.
+        has_cmd = bool(event.state & 0x8)
+        has_alt = bool(event.state & 0x10)
+    else:
+        has_cmd = False
+        has_alt = bool(event.state & 0x8 or event.state & 0x80)
 
     sym = event.keysym.lower()
 
@@ -39,6 +45,9 @@ def is_application_shortcut(event: tk.Event) -> bool:
         return True
 
     if has_ctrl and has_shift and sym in ("t", "w", "d", "f", "k", "c", "v"):
+        return True
+
+    if not is_mac and has_ctrl and event.keysym in ("Up", "Down"):
         return True
 
     return bool(has_alt and event.keysym in ("1", "2", "3", "4", "5", "6", "7", "8", "9"))

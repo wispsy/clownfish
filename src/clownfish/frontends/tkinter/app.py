@@ -153,9 +153,8 @@ class TkTerminalApp:
             self.root.bind("<Alt-bracketright>", lambda e: self._next_split())
             self.root.bind("<Control-equal>", lambda e: self._equalize_splits())
             self.root.bind("<Control-plus>", lambda e: self._equalize_splits())
-
-        self.root.bind("<Control-Up>", lambda e: self._jump_prompt(-1))
-        self.root.bind("<Control-Down>", lambda e: self._jump_prompt(1))
+            self.root.bind("<Control-Up>", lambda e: self._jump_prompt(-1))
+            self.root.bind("<Control-Down>", lambda e: self._jump_prompt(1))
 
         # Tab switching
         self.root.bind("<Control-Tab>", lambda e: self._next_tab())
