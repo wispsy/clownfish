@@ -15,6 +15,10 @@ This document analyzes the fundamental capabilities that separate traditional/to
 | **Device Attribute Replies (DA1/DA2/DSR)** | Protocol | Critical | **Implemented** (VT220 DA1, DA2, CPR, OSC 10/11) |
 | **Kitty Extended Keyboard Protocol** | Modern CLI UX | High | **Implemented** (Flag negotiation + structured modifier codes) |
 | **Shell Integration (OSC 133)** | Modern CLI UX | Medium | **Implemented** (Semantic prompt marks & jumping) |
+| **Tabs & Nested Split Panes** | Modern CLI UX | High | **Implemented** (`TabbedTerminalView` & `SplitView`) |
+| **In-Buffer Search & Highlighting** | Modern CLI UX | High | **Implemented** (`search_screen` overlay & match cycling) |
+| **macOS Native Bundle (`.app`)** | Distribution | High | **Implemented** (PyInstaller bundle, Info.plist, code signing) |
+| **Package Distribution (PyPI & Tap)** | Distribution | High | **Implemented** (Trusted Publishing & `wispsy/homebrew-tap`) |
 | **GPU Glyph Atlas & Ligatures** | Performance | High | **Roadmap** (HarfBuzz shaping & GPU renderer) |
 | **Terminal Graphics (Kitty / Sixel)** | Media | Medium | **Roadmap** (Inline image streaming) |
 

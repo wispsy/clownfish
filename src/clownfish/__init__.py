@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.4.9"
+__version__ = "0.5.0"
 __all__ = [
     "Cell",
     "PTYTransport",
@@ -100,6 +100,17 @@ def main(args: list[str] | None = None) -> None:
         except OSError:
             pass
         os.execvp(argv[1], argv[1:])
+        return
+
+    if argv and argv[0] in ("-v", "--version"):
+        print(f"clownfish {__version__}")
+        return
+
+    if argv and argv[0] in ("-h", "--help"):
+        print(f"clownfish {__version__} - A modern terminal emulator written in Python and Tkinter")
+        print("\nUsage:\n  clownfish [options]")
+        print("\nOptions:\n  -v, --version       Show version number and exit")
+        print("  -h, --help          Show this help message and exit")
         return
 
     import tkinter as tk

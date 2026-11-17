@@ -97,3 +97,23 @@ flowchart TD
 - **Defensive Parser Bounds**: CSI parameters are bounded to 32 digits, 64 parameter groups, and 16 subparameters. OSC and DCS strings are bounded to 8,192 bytes to defend against memory exhaustion and integer conversion denial-of-service.
 - **PTY Backpressure & Packaging Trampoline**: Both incoming event queues (4,096 items) and outgoing write queues (1,000 chunks) have bounded limits. The PTY launcher includes a `--pty-trampoline` entrypoint compatible with PyInstaller-frozen `.app` bundles where `sys.executable` is not a Python interpreter.
 - **Job Control & Safe Teardown**: Active foreground jobs are detected via `os.tcgetpgrp(master_fd)` to prompt for user confirmation before terminating running processes during tab or window close. Safe multiline paste protects against accidental execution of newline-separated shell commands.
+
+---
+
+## Packaging & Distribution Architecture
+
+Clownfish v0.5.0 introduces automated multi-channel distribution:
+
+### 1. Standalone macOS Application Bundle (`Clownfish.app`)
+- **PyInstaller Specification (`Clownfish.spec`)**: Compiles Python source files, bytecode, Tk/Tcl libraries, dynamic dylibs, and bundled resources (`clownfish.png`) into a standalone macOS `--windowed` bundle with bundle ID `tech.wispsy.clownfish`.
+- **Icon Assets (`assets/Clownfish.icns`)**: Generated from the high-resolution vector/raster asset into multi-resolution icons (16x16 through 1024x1024 @2x retina).
+- **PTY Trampoline Launcher**: Frozen executables on macOS cannot invoke arbitrary Python code via `sys.executable -c`. Clownfish bypasses this via `clownfish --pty-trampoline <command>`, configuring controlling terminals and invoking target shells directly.
+- **Info.plist Customization & Ad-Hoc Signing**: Automatically sets `CFBundleDisplayName`, `CFBundleShortVersionString`, `NSHighResolutionCapable`, and `NSRequiresAquaSystemAppearance`, followed by strict deep ad-hoc code signing (`codesign --force --deep -s -`) to satisfy macOS security requirements.
+
+### 2. PyPI Trusted Publishing
+- Uses GitHub Actions OpenID Connect (OIDC) token exchange with PyPI (`environment: pypi`, `id-token: write`).
+- Pure standard-library runtime design ensures zero external dependencies and frictionless wheel installations across all platforms (`pip install clownfish`, `uv tool install clownfish`).
+
+### 3. Homebrew Tap Distribution (`wispsy/homebrew-tap`)
+- **Formula (`Formula/clownfish.rb`)**: Distributes the pure CLI application using `Language::Python::Virtualenv` in an isolated virtual environment.
+- **Cask (`Casks/clownfish.rb`)**: Distributes the prebuilt standalone macOS `.app` bundle directly from GitHub releases to `/Applications/Clownfish.app` with a symlinked `/usr/local/bin/clownfish` or `HOMEBREW_PREFIX/bin/clownfish` binary.
