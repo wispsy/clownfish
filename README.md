@@ -39,27 +39,69 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Installation & Running
 
+Clownfish offers multiple installation channels: native macOS application bundle, Homebrew tap, PyPI package, or source.
+
+### Option 1: macOS Application Bundle (`Clownfish.app`)
+
+Download the latest release archive from [GitHub Releases](https://github.com/wispsy/clownfish/releases):
+
+1. Download `Clownfish-v0.5.0-macos.zip`.
+2. Unzip the archive:
+   ```bash
+   unzip Clownfish-v0.5.0-macos.zip
+   ```
+3. Move `Clownfish.app` to `/Applications`:
+   ```bash
+   mv Clownfish.app /Applications/
+   ```
+4. Launch Clownfish from Spotlight, Finder, or from your terminal with `open /Applications/Clownfish.app`.
+
+### Option 2: Homebrew Tap (`wispsy/homebrew-tap`)
+
+Install Clownfish via the official [Wispsy Homebrew tap](https://github.com/wispsy/homebrew-tap):
+
+```bash
+# Add the tap
+brew tap wispsy/tap
+
+# Install the CLI formula (isolated Python environment)
+brew install clownfish
+
+# Or install the standalone macOS GUI application via Cask
+brew install --cask wispsy/tap/clownfish
+```
+
+### Option 3: PyPI Package (`pip` / `uv`)
+
+Clownfish is published to PyPI and requires Python 3.14+:
+
+```bash
+# Using uv (recommended)
+uv tool install clownfish
+
+# Or using pip
+pip install clownfish
+```
+
+Run directly:
+```bash
+clownfish
+```
+
+### Option 4: From Source (Development)
+
 Ensure you have Python 3.14+ and [uv](https://docs.astral.sh/uv/) installed.
 
-### Clone the Repository
 ```bash
 git clone https://github.com/wispsy/clownfish.git
 cd clownfish
-```
-
-### Install Dependencies
-```bash
 uv sync --all-extras
-```
-
-### Run Clownfish
-```bash
 uv run clownfish
 ```
 
-Or run directly with python:
+To build the standalone macOS `.app` bundle from source:
 ```bash
-uv run python -m clownfish
+uv run --with pyinstaller python scripts/build_macos_app.py
 ```
 
 ---
@@ -92,11 +134,23 @@ uv run ruff check .
 clownfish/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                 # GitHub Actions CI workflow (Ubuntu & macOS)
+│       ├── ci.yml                 # GitHub Actions CI workflow (Ubuntu & macOS)
+│       └── release.yaml           # Automated PyPI & GitHub Release workflow
+├── assets/
+│   └── Clownfish.icns             # Multi-resolution macOS application icon
 ├── docs/
 │   ├── architecture.md            # Architecture overview & data flow
 │   ├── modern-terminal-gap-analysis.md # Modern terminal specifications
 │   └── shortcuts.md               # Keybinding reference
+├── packaging/
+│   └── homebrew/                  # Homebrew tap formulas & casks
+│       ├── Casks/
+│       │   └── clownfish.rb
+│       └── Formula/
+│           └── clownfish.rb
+├── scripts/
+│   ├── build_macos_app.py         # PyInstaller macOS bundle & zip builder
+│   └── publish_homebrew.py        # Homebrew tap release automation
 ├── src/
 │   └── clownfish/
 │       ├── __init__.py            # Public API exports & launch function
