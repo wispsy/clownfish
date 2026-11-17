@@ -2,19 +2,43 @@
 
 from __future__ import annotations
 
+import sys
 
-def encode_kitty_key(keysym: str, state: int, char: str = "") -> bytes | None:
-    """Encode key event into Kitty/xterm modified keyboard escape sequences."""
-    # Modifiers: Shift=1, Alt=2, Ctrl=4, Super=8. Parameter value = 1 + bitmask.
+
+def _get_modifier_mask(keysym: str, state: int) -> int:
+    """Calculate xterm/Kitty modifier code (1 + Shift=1, Alt=2, Ctrl=4, Super=8).
+
+    Correctly filters hardware flags (such as 0x40 on macOS for navigation/Fn keys
+    and 0x10 on Linux for NumLock) so arrow keys are not corrupted with spurious modifiers.
+    """
+    is_mac = sys.platform == "darwin"
     mod = 1
     if state & 0x1:  # Shift
         mod += 1
-    if state & 0x8 or state & 0x80:  # Alt / Option (Meta)
+
+    # Alt / Option (Meta):
+    # - 0x8: standard Mod1 (Alt / Option across xterm/Kitty and X11)
+    # - 0x10: on macOS Aqua Tk, Option is Mod2 (0x10)
+    # - 0x80: Mod5 / AltGr
+    if (state & 0x8) or (state & 0x80) or (is_mac and (state & 0x10)):
         mod += 2
+
     if state & 0x4:  # Control
         mod += 4
-    if state & 0x40 or state & 0x10:  # Super / Command
+
+    # Super (Windows / Command key):
+    # On Linux/X11, Mod4 (0x40) is Super.
+    # On macOS, 0x40 is the hardware Fn/Arrow key flag (NSEventModifierFlagFunction)
+    # and must never be treated as Super.
+    if not is_mac and (state & 0x40):
         mod += 8
+
+    return mod
+
+
+def encode_kitty_key(keysym: str, state: int, char: str = "") -> bytes | None:
+    """Encode key event into Kitty/xterm modified keyboard escape sequences."""
+    mod = _get_modifier_mask(keysym, state)
 
     if mod <= 1:
         return None
@@ -83,15 +107,7 @@ def encode_key_press(
         if kitty_encoded is not None:
             return kitty_encoded
 
-    mod = 1
-    if state & 0x1:  # Shift
-        mod += 1
-    if state & 0x8 or state & 0x80:  # Alt / Option (Meta)
-        mod += 2
-    if state & 0x4:  # Control
-        mod += 4
-    if state & 0x40 or state & 0x10:  # Super / Command
-        mod += 8
+    mod = _get_modifier_mask(keysym, state)
 
     # 2. Shift+Tab in xterm
     if keysym == "ISO_Left_Tab" or (keysym == "Tab" and (state & 0x1)):
@@ -169,9 +185,11 @@ def encode_key_press(
         return arrow_map[keysym]
     if keysym in keymap:
         return keymap[keysym]
+    is_mac = sys.platform == "darwin"
+    has_alt = bool((state & 0x10) if is_mac else (state & 0x8 or state & 0x80))
     if (state & 0x4) and keysym.isalpha() and len(keysym) == 1:
         return bytes([ord(keysym.lower()) - 96])
-    if (state & 0x8 or state & 0x80) and char and not (state & 0x4):
+    if has_alt and char and not (state & 0x4):
         return b"\x1b" + char.encode("utf-8")
     if char:
         return char.encode("utf-8")

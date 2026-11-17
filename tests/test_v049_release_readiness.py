@@ -369,3 +369,51 @@ def test_pty_trampoline_in_frozen_mode() -> None:
     with patch("os.execvp") as mock_exec:
         main(["--pty-trampoline", "echo", "hello"])
         mock_exec.assert_called_once_with("echo", ["echo", "hello"])
+
+
+def test_arrow_keys_and_command_history_on_macos() -> None:
+    """Verify arrow keys with macOS hardware Fn/Arrow mask (state=64 / 0x40)
+
+    produce clean escape sequences (\\x1b[A for Up, \\x1b[B for Down)
+    and are not misidentified as application shortcuts (such as Cmd+Up).
+    """
+    from clownfish.core.keyboard import encode_key_press
+
+    class MockEvent:
+        def __init__(self, keysym: str, state: int) -> None:
+            self.keysym = keysym
+            self.state = state
+
+    with patch("sys.platform", "darwin"):
+        # 1. Plain Up arrow on macOS (state 0 or 64 from Fn/arrow flag)
+        event_up_fn = MockEvent("Up", 64)
+        assert not is_application_shortcut(event_up_fn)
+        assert encode_key_press("Up", 64) == b"\x1b[A"
+        assert encode_key_press("Up", 0) == b"\x1b[A"
+
+        # Application cursor mode
+        assert encode_key_press("Up", 64, application_cursor_keys=True) == b"\x1bOA"
+
+        # 2. Plain Down, Left, Right arrows on macOS
+        assert not is_application_shortcut(MockEvent("Down", 64))
+        assert encode_key_press("Down", 64) == b"\x1b[B"
+        assert encode_key_press("Left", 64) == b"\x1b[D"
+        assert encode_key_press("Right", 64) == b"\x1b[C"
+
+        # 3. Cmd+Up and Cmd+Down on macOS (state 0x8 or 0x48 = 64 | 8)
+        event_cmd_up = MockEvent("Up", 72)
+        event_cmd_down = MockEvent("Down", 72)
+        assert is_application_shortcut(event_cmd_up)
+        assert is_application_shortcut(event_cmd_down)
+
+        # 4. Shift+Up, Option+Up, Ctrl+Up on macOS
+        assert encode_key_press("Up", 65) == b"\x1b[1;2A"  # Shift (64 + 1)
+        assert encode_key_press("Up", 80) == b"\x1b[1;3A"  # Option (64 + 16)
+        assert encode_key_press("Up", 68) == b"\x1b[1;5A"  # Ctrl (64 + 4)
+
+    with patch("sys.platform", "linux"):
+        # 5. Linux Up arrow with NumLock ON (state 16 / 0x10)
+        event_linux_numlock = MockEvent("Up", 16)
+        assert not is_application_shortcut(event_linux_numlock)
+        assert encode_key_press("Up", 16) == b"\x1b[A"
+
