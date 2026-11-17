@@ -49,6 +49,7 @@ class TerminalPane(tk.Frame):
         self.session.auto_drain = False
         self.session.on_title_changed = self._on_title_changed
         self.session.on_close = self._on_session_close
+        self.session.on_bell = self._on_bell
         self.session.on_clipboard_write = self._on_clipboard_write
         self.session.on_clipboard_query = self._on_clipboard_query
         self.session.on_notification = self._on_notification
@@ -157,6 +158,8 @@ class TerminalPane(tk.Frame):
             self.canvas.config(highlightbackground="#4a90e2", highlightcolor="#4a90e2")
         except tk.TclError:
             pass
+        if getattr(self.session.parser, "focus_reporting", False):
+            self.session.write(b"\x1b[I")
         if self.on_focus:
             self.on_focus(self)
 
@@ -165,6 +168,8 @@ class TerminalPane(tk.Frame):
             self.canvas.config(highlightbackground="#2a2a32", highlightcolor="#2a2a32")
         except tk.TclError:
             pass
+        if getattr(self.session.parser, "focus_reporting", False):
+            self.session.write(b"\x1b[O")
 
     def focus(self) -> None:
         """Focus the terminal canvas."""
@@ -300,18 +305,24 @@ class TerminalPane(tk.Frame):
 
     def _render_tick(self) -> None:
         has_pending = self.session.drain_events()
-        if self.search_state.query and self.screen.dirty_lines:
-            matches = search_screen(self.screen, self.search_state.query)
-            self.search_state.set_results(self.search_state.query, matches)
-            self._update_search_ui(jump=False)
+        is_viewable = bool(self.winfo_viewable())
 
-        self.renderer.render(self.screen, self.cols, self.rows)
-        if self.search_state.matches:
-            self.renderer.draw_search_matches(
-                self.search_state.matches, self.search_state.current_match, self.screen, self.cols, self.rows
-            )
+        if is_viewable:
+            if self.search_state.query and self.screen.dirty_lines:
+                matches = search_screen(self.screen, self.search_state.query)
+                self.search_state.set_results(self.search_state.query, matches)
+                self._update_search_ui(jump=False)
+
+            self.renderer.render(self.screen, self.cols, self.rows)
+            if self.search_state.matches:
+                self.renderer.draw_search_matches(
+                    self.search_state.matches, self.search_state.current_match, self.screen, self.cols, self.rows
+                )
+        else:
+            self.screen.mark_all_dirty()
+
         try:
-            delay = 1 if has_pending else 16
+            delay = 1 if has_pending else (16 if is_viewable else 100)
             self._tick_job = self.after(delay, self._render_tick)
         except tk.TclError:
             pass
@@ -324,8 +335,17 @@ class TerminalPane(tk.Frame):
         if self.on_close:
             self.on_close(self)
 
+    def _on_session_event(self) -> None:
+        """Wake UI thread when background PTY events arrive."""
+        try:
+            self.after_idle(self._render_tick)
+        except (tk.TclError, OSError):
+            pass
+
     def _on_clipboard_write(self, selection: str, text: str) -> None:
         """Handle OSC 52 clipboard write."""
+        if not getattr(self.config, "allow_clipboard_write", True):
+            return
         try:
             self.clipboard_clear()
             self.clipboard_append(text)
@@ -333,7 +353,9 @@ class TerminalPane(tk.Frame):
             pass
 
     def _on_clipboard_query(self, selection: str) -> str:
-        """Handle OSC 52 clipboard query."""
+        """Handle OSC 52 clipboard query if security policy allows."""
+        if not getattr(self.config, "allow_clipboard_read", False):
+            return ""
         try:
             return self.clipboard_get()
         except (tk.TclError, OSError):
@@ -345,6 +367,17 @@ class TerminalPane(tk.Frame):
             self.bell()
         except (tk.TclError, OSError):
             pass
+
+    def _on_bell(self) -> None:
+        """Handle bell request from parser or OSC."""
+        try:
+            self.bell()
+        except (tk.TclError, OSError):
+            pass
+
+    def has_foreground_process(self) -> bool:
+        """Return True if a foreground process is running in this pane."""
+        return self.session.has_foreground_process()
 
     def close(self) -> None:
         """Close this pane and clean up session and callbacks."""

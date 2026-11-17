@@ -73,15 +73,18 @@ class PTYTransport(Transport):
             cmd = [shell, "-l", "-i"]
 
         if sys.platform != "win32":
-            trampoline = (
-                "import fcntl, os, sys, termios\n"
-                "try:\n"
-                "    fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
-                "except OSError:\n"
-                "    pass\n"
-                "os.execvp(sys.argv[1], sys.argv[1:])\n"
-            )
-            spawn_cmd = [sys.executable, "-c", trampoline, *cmd]
+            if getattr(sys, "frozen", False):
+                spawn_cmd = [sys.executable, "--pty-trampoline", *cmd]
+            else:
+                trampoline = (
+                    "import fcntl, os, sys, termios\n"
+                    "try:\n"
+                    "    fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+                    "except OSError:\n"
+                    "    pass\n"
+                    "os.execvp(sys.argv[1], sys.argv[1:])\n"
+                )
+                spawn_cmd = [sys.executable, "-c", trampoline, *cmd]
         else:
             spawn_cmd = cmd
 
@@ -164,12 +167,15 @@ class PTYTransport(Transport):
         if self._on_close:
             self._on_close()
 
+    MAX_WRITE_QUEUE_CHUNKS: int = 1000
+
     def write(self, data: bytes) -> None:
         """Enqueue bytes for lossless asynchronous writing to the master PTY."""
         if not self._running or self.master_fd is None or not data:
             return
         with self._write_lock:
-            self._write_queue.append(data)
+            if len(self._write_queue) < self.MAX_WRITE_QUEUE_CHUNKS:
+                self._write_queue.append(data)
 
     def resize(self, cols: int, rows: int) -> None:
         """Update PTY window size."""
@@ -224,3 +230,14 @@ class PTYTransport(Transport):
             self._running = False
             return False
         return True
+
+    def has_foreground_process(self) -> bool:
+        """Return True if a foreground process other than the login shell is running."""
+        if not self._running or self.master_fd is None or self.pid is None:
+            return False
+        try:
+            fg_pgid = os.tcgetpgrp(self.master_fd)
+            shell_pgid = os.getpgid(self.pid)
+            return fg_pgid > 0 and fg_pgid != shell_pgid and fg_pgid != self.pid
+        except OSError:
+            return False

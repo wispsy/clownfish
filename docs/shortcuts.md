@@ -22,6 +22,9 @@ This guide covers all key combinations and pointer interactions supported in Clo
 | :--- | :--- | :--- |
 | `Cmd + D` | `Ctrl + Shift + D` | **Split Vertical**: Split current pane top-and-bottom. |
 | `Cmd + Shift + D` | `Ctrl + Shift + Alt + D` | **Split Horizontal**: Split current pane side-by-side. |
+| `Cmd + [` | `Alt + [` | **Previous Split**: Focus previous split pane in active tab. |
+| `Cmd + ]` | `Alt + ]` | **Next Split**: Focus next split pane in active tab. |
+| `Cmd + =` | `Ctrl + =` | **Equalize Splits**: Reset all split sashes to equal dimensions. |
 
 ---
 

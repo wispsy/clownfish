@@ -47,3 +47,7 @@ class Transport(ABC):
     @abstractmethod
     def is_alive(self) -> bool:
         """Return True if the transport is still running/connected."""
+
+    def has_foreground_process(self) -> bool:
+        """Return True if a foreground process is actively running in the transport."""
+        return False

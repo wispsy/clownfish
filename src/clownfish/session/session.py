@@ -85,6 +85,7 @@ class TerminalSession:
             on_notification=self._on_parser_notification,
             on_clipboard_write=self._on_parser_clipboard_write,
             on_clipboard_query=self._on_parser_clipboard_query,
+            on_bell=self._on_parser_bell,
         )
         self.utf8_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
@@ -94,7 +95,7 @@ class TerminalSession:
             on_close=self._on_transport_close,
         )
 
-        self._event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._event_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=4096)
         self._event_notifier: Callable[[], None] | None = None
 
     def set_event_notifier(self, notifier: Callable[[], None] | None) -> None:
@@ -121,6 +122,8 @@ class TerminalSession:
                     self.on_output()
                 if bytes_processed >= max_bytes:
                     return not self._event_queue.empty()
+            elif event_type == "bell" and self.on_bell:
+                self.on_bell()
             elif event_type == "close" and self.on_close:
                 self.on_close()
 
@@ -166,21 +169,30 @@ class TerminalSession:
             return self.on_clipboard_query(selection)
         return ""
 
-    def _on_transport_data(self, raw_bytes: bytes) -> None:
-        """Enqueue incoming raw bytes from the transport."""
-        self._event_queue.put(("data", raw_bytes))
+    def _on_parser_bell(self) -> None:
+        """Propagate bell event triggered by parser."""
+        self._enqueue_event("bell", None)
+        if self.on_bell is not None:
+            self.on_bell()
+
+    def _enqueue_event(self, event_type: str, payload: Any) -> None:
+        """Enqueue event with bounded backpressure."""
+        try:
+            self._event_queue.put_nowait((event_type, payload))
+        except queue.Full:
+            return
         if self._event_notifier is not None:
             self._event_notifier()
         elif self.auto_drain:
             self.drain_events()
 
+    def _on_transport_data(self, raw_bytes: bytes) -> None:
+        """Enqueue incoming raw bytes from the transport."""
+        self._enqueue_event("data", raw_bytes)
+
     def _on_transport_close(self) -> None:
         """Enqueue transport disconnection."""
-        self._event_queue.put(("close", None))
-        if self._event_notifier is not None:
-            self._event_notifier()
-        elif self.auto_drain:
-            self.drain_events()
+        self._enqueue_event("close", None)
 
     def feed_text(self, text: str) -> None:
         """Directly feed text to the session's VT100 parser."""
@@ -267,6 +279,11 @@ class TerminalSession:
             self.screen.scroll_offset = new_offset
             self.screen.mark_all_dirty()
         return new_offset
+
+    def has_foreground_process(self) -> bool:
+        """Return True if a foreground process is running in the session transport."""
+        checker = getattr(self.transport, "has_foreground_process", None)
+        return bool(checker()) if callable(checker) else False
 
     def close(self) -> None:
         """Close the session and its transport."""

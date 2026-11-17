@@ -149,8 +149,8 @@ class TkTerminalApp:
             self.root.bind("<Control-Shift-c>", self._copy_selection_to_clipboard)
             self.root.bind("<Control-Shift-V>", self._paste_from_clipboard)
             self.root.bind("<Control-Shift-v>", self._paste_from_clipboard)
-            self.root.bind("<Control-bracketleft>", lambda e: self._prev_split())
-            self.root.bind("<Control-bracketright>", lambda e: self._next_split())
+            self.root.bind("<Alt-bracketleft>", lambda e: self._prev_split())
+            self.root.bind("<Alt-bracketright>", lambda e: self._next_split())
             self.root.bind("<Control-equal>", lambda e: self._equalize_splits())
             self.root.bind("<Control-plus>", lambda e: self._equalize_splits())
 
@@ -173,6 +173,21 @@ class TkTerminalApp:
         return "break"
 
     def _close_current(self) -> str:
+        if getattr(self.config, "confirm_close_active_process", True):
+            try:
+                pane = self.active_pane
+                if pane and pane.has_foreground_process():
+                    from tkinter import messagebox
+
+                    if not messagebox.askyesno(
+                        "Close Terminal?",
+                        "A process is currently running in this terminal.\nClosing it will terminate the process. Close anyway?",
+                        parent=self.root,
+                    ):
+                        return "break"
+            except (tk.TclError, OSError):
+                return "break"
+
         split_view = self.tab_view.active_split_view
         if split_view and len(split_view.panes()) > 1:
             split_view.close_pane(self.active_pane)
@@ -275,8 +290,22 @@ class TkTerminalApp:
     def _paste_from_clipboard(self, event: tk.Event | None = None) -> str:
         try:
             clipboard_text = self.root.clipboard_get()
-            if clipboard_text:
-                self.active_pane.session.paste(clipboard_text)
+            if not clipboard_text:
+                return "break"
+            if getattr(self.config, "confirm_multiline_paste", False) and "\n" in clipboard_text:
+                from tkinter import messagebox
+
+                line_count = clipboard_text.count("\n") + 1
+                preview = clipboard_text.strip()
+                if len(preview) > 150:
+                    preview = preview[:150] + "..."
+                if not messagebox.askyesno(
+                    "Confirm Multiline Paste",
+                    f"You are about to paste {line_count} lines into the terminal:\n\n{preview}\n\nDo you want to continue?",
+                    parent=self.root,
+                ):
+                    return "break"
+            self.active_pane.session.paste(clipboard_text)
         except (RuntimeError, tk.TclError):
             pass
         return "break"
@@ -291,6 +320,22 @@ class TkTerminalApp:
         self._on_window_close()
 
     def _on_window_close(self) -> None:
+        if getattr(self.config, "confirm_close_active_process", True):
+            has_active = any(
+                pane.has_foreground_process()
+                for _, sv in self.tab_view.tabs
+                for pane in sv.panes()
+            )
+            if has_active:
+                from tkinter import messagebox
+
+                if not messagebox.askyesno(
+                    "Quit Clownfish?",
+                    "One or more processes are currently running in your terminal tabs.\nClosing the window will terminate them. Quit anyway?",
+                    parent=self.root,
+                ):
+                    return
+
         for _, sv in self.tab_view.tabs:
             for pane in sv.panes():
                 pane.close()

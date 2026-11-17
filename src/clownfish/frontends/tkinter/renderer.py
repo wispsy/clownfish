@@ -111,9 +111,11 @@ class TkCanvasRenderer:
 
             self.canvas.create_rectangle(
                 x1, y1, x2, y2,
-                fill=self.config.selection_color, outline="", stipple="gray50", tags="selection_box"
+                fill=self.config.selection_color, outline="", tags="selection_box"
             )
 
+        self.canvas.tag_raise("text_item")
+        self.canvas.tag_raise("line_item")
         self.canvas.tag_raise("cursor")
 
     def draw_search_matches(
@@ -157,6 +159,8 @@ class TkCanvasRenderer:
                     tags="search_highlight",
                 )
 
+        self.canvas.tag_raise("text_item")
+        self.canvas.tag_raise("line_item")
         self.canvas.tag_raise("cursor")
 
     def _render_row(self, screen: ScreenBuffer, r: int, cols: int) -> None:
@@ -200,20 +204,20 @@ class TkCanvasRenderer:
             if bg != DEFAULT_BG:
                 self.canvas.create_rectangle(
                     x1, y, x2, y + self.cell_h,
-                    fill=self.rgb_to_hex(bg), outline="", tags=tag
+                    fill=self.rgb_to_hex(bg), outline="", tags=(tag, "bg_item")
                 )
 
             if text_str.strip():
                 font = self.fonts[(st.bold, st.italic)]
                 self.canvas.create_text(
                     x1, y, text=text_str, anchor="nw",
-                    fill=self.rgb_to_hex(fg), font=font, tags=tag
+                    fill=self.rgb_to_hex(fg), font=font, tags=(tag, "text_item")
                 )
 
             if st.underline or url:
                 uy = y + self.cell_h - 2
                 self.canvas.create_line(
-                    x1, uy, x2, uy, fill=self.rgb_to_hex(fg), tags=tag
+                    x1, uy, x2, uy, fill=self.rgb_to_hex(fg), tags=(tag, "line_item")
                 )
 
             col = next_col
