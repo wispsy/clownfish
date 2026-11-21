@@ -47,6 +47,12 @@ class TkTerminalApp:
             session.on_close = self.tab_view.active_pane._on_session_close
             session.set_event_notifier(self.tab_view.active_pane._on_session_event)
             session.start()
+        elif getattr(self.config, "restore_session", True):
+            from clownfish.session.persistence import SessionState
+
+            saved_state = SessionState.load()
+            if saved_state is not None:
+                self.tab_view.load_state(saved_state)
 
         self._bind_shortcuts()
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
@@ -126,6 +132,8 @@ class TkTerminalApp:
         if sys.platform == "darwin":
             self.root.bind("<Command-t>", lambda e: self._new_tab())
             self.root.bind("<Command-w>", lambda e: self._close_current())
+            self.root.bind("<Command-Shift-O>", lambda e: self._open_ssh_dialog())
+            self.root.bind("<Command-Shift-o>", lambda e: self._open_ssh_dialog())
             self.root.bind("<Command-d>", lambda e: self.split_vertical())
             self.root.bind("<Command-D>", lambda e: self.split_horizontal())
             self.root.bind("<Command-f>", lambda e: self._toggle_search())
@@ -139,6 +147,8 @@ class TkTerminalApp:
             self.root.bind("<Command-Up>", lambda e: self._jump_prompt(-1))
             self.root.bind("<Command-Down>", lambda e: self._jump_prompt(1))
         else:
+            self.root.bind("<Control-Shift-O>", lambda e: self._open_ssh_dialog())
+            self.root.bind("<Control-Shift-o>", lambda e: self._open_ssh_dialog())
             self.root.bind("<Control-Shift-D>", lambda e: self.split_vertical())
             self.root.bind("<Control-Shift-d>", lambda e: self.split_vertical())
             self.root.bind("<Control-Shift-F>", lambda e: self._toggle_search())
@@ -315,6 +325,121 @@ class TkTerminalApp:
         except tk.TclError:
             pass
 
+    def _open_ssh_dialog(self) -> str:
+        """Open modal dialog to connect to an SSH host in a new tab."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Connect to Remote Host (SSH)")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.configure(bg="#18181c")
+        dialog.resizable(False, False)
+
+        tk.Label(
+            dialog,
+            text="Remote Destination (host or user@host):",
+            bg="#18181c",
+            fg="#e5e5e5",
+            font=("Helvetica", 11),
+        ).pack(anchor=tk.W, padx=16, pady=(12, 4))
+        dest_entry = tk.Entry(
+            dialog,
+            bg="#282830",
+            fg="#ffffff",
+            insertbackground="#ffffff",
+            width=36,
+            font=("Helvetica", 11),
+        )
+        dest_entry.pack(fill=tk.X, padx=16)
+        dest_entry.focus_set()
+
+        tk.Label(
+            dialog,
+            text="Port (optional, default 22):",
+            bg="#18181c",
+            fg="#e5e5e5",
+            font=("Helvetica", 11),
+        ).pack(anchor=tk.W, padx=16, pady=(8, 4))
+        port_entry = tk.Entry(
+            dialog,
+            bg="#282830",
+            fg="#ffffff",
+            insertbackground="#ffffff",
+            width=36,
+            font=("Helvetica", 11),
+        )
+        port_entry.insert(0, "22")
+        port_entry.pack(fill=tk.X, padx=16)
+
+        tk.Label(
+            dialog,
+            text="Identity File (optional):",
+            bg="#18181c",
+            fg="#e5e5e5",
+            font=("Helvetica", 11),
+        ).pack(anchor=tk.W, padx=16, pady=(8, 4))
+        id_entry = tk.Entry(
+            dialog,
+            bg="#282830",
+            fg="#ffffff",
+            insertbackground="#ffffff",
+            width=36,
+            font=("Helvetica", 11),
+        )
+        id_entry.pack(fill=tk.X, padx=16)
+
+        btn_frame = tk.Frame(dialog, bg="#18181c")
+        btn_frame.pack(fill=tk.X, padx=16, pady=(16, 12))
+
+        def do_connect():
+            dest = dest_entry.get().strip()
+            if not dest:
+                return
+            port_val = port_entry.get().strip()
+            port = int(port_val) if port_val.isdigit() else 22
+            id_val = id_entry.get().strip() or None
+
+            user = None
+            host = dest
+            if "@" in dest:
+                user, host = dest.split("@", 1)
+
+            dialog.destroy()
+            self.tab_view.new_ssh_tab(
+                host=host,
+                user=user,
+                port=port,
+                identity_file=id_val,
+            )
+
+        connect_btn = tk.Button(
+            btn_frame,
+            text="Connect",
+            bg="#4a90e2",
+            fg="#ffffff",
+            activebackground="#357abd",
+            command=do_connect,
+            relief=tk.FLAT,
+            padx=12,
+            pady=4,
+        )
+        connect_btn.pack(side=tk.RIGHT, padx=(8, 0))
+
+        cancel_btn = tk.Button(
+            btn_frame,
+            text="Cancel",
+            bg="#282830",
+            fg="#e5e5e5",
+            command=dialog.destroy,
+            relief=tk.FLAT,
+            padx=12,
+            pady=4,
+        )
+        cancel_btn.pack(side=tk.RIGHT)
+
+        dialog.bind("<Return>", lambda e: do_connect())
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        return "break"
+
     def _on_all_closed(self) -> None:
         self._on_window_close()
 
@@ -334,6 +459,13 @@ class TkTerminalApp:
                     parent=self.root,
                 ):
                     return
+
+        if getattr(self.config, "restore_session", True):
+            try:
+                state = self.tab_view.dump_state()
+                state.save()
+            except (OSError, tk.TclError):
+                pass
 
         for _, sv in self.tab_view.tabs:
             for pane in sv.panes():

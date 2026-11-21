@@ -6,10 +6,15 @@ import os
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from clownfish.config import TerminalConfig
 from clownfish.frontends.tkinter.pane import TerminalPane
 from clownfish.frontends.tkinter.renderer import TkCanvasRenderer
+
+if TYPE_CHECKING:
+    from clownfish.session.persistence import SplitNodeState
+    from clownfish.session.session import TerminalSession
 
 
 class SplitView(tk.Frame):
@@ -43,15 +48,134 @@ class SplitView(tk.Frame):
         self._panes.append(initial_pane)
         self.active_pane = initial_pane
 
-    def _create_pane(self, parent: tk.Widget, cwd: str | None = None) -> TerminalPane:
+    def _create_pane(
+        self,
+        parent: tk.Widget,
+        cwd: str | None = None,
+        session: TerminalSession | None = None,
+    ) -> TerminalPane:
         return TerminalPane(
             parent,
+            session=session,
             config=self.config,
             on_focus=self._handle_pane_focus,
             on_close=self._handle_pane_close,
             on_title_change=self._handle_pane_title,
             cwd=cwd,
         )
+
+    def dump_state(self) -> SplitNodeState:
+        """Serialize the split hierarchy into a SplitNodeState."""
+        from clownfish.session.persistence import PaneState, SplitNodeState
+
+        paned_windows = [c for c in self.winfo_children() if isinstance(c, tk.PanedWindow)]
+        if paned_windows:
+            root_w = paned_windows[0]
+        else:
+            panes = [c for c in self.winfo_children() if isinstance(c, TerminalPane)]
+            root_w = panes[0] if panes else None
+
+        if root_w is None:
+            return SplitNodeState(is_leaf=True, pane=PaneState(cwd=str(Path.home())))
+
+        return self._dump_widget_state(root_w)
+
+    def _dump_widget_state(self, widget: tk.Widget) -> SplitNodeState:
+        from clownfish.session.persistence import PaneState, SplitNodeState
+        from clownfish.transports.ssh import SSHTransport
+
+        if isinstance(widget, TerminalPane):
+            ssh_info = None
+            transport = getattr(widget.session, "transport", None)
+            if isinstance(transport, SSHTransport):
+                ssh_info = {
+                    "host": transport.host,
+                    "port": transport.port,
+                    "user": transport.user,
+                    "identity_file": transport.identity_file,
+                }
+            return SplitNodeState(
+                is_leaf=True,
+                pane=PaneState(
+                    cwd=widget.session.cwd or None,
+                    title=widget.session.title,
+                    ssh=ssh_info,
+                ),
+            )
+        if isinstance(widget, tk.PanedWindow):
+            orient = "horizontal" if str(widget.cget("orient")) == str(tk.HORIZONTAL) else "vertical"
+            child_states = []
+            for child_name in widget.panes():
+                child_w = self.nametowidget(child_name)
+                child_states.append(self._dump_widget_state(child_w))
+            return SplitNodeState(
+                is_leaf=False,
+                orientation=orient,
+                children=child_states,
+            )
+        return SplitNodeState(is_leaf=True, pane=PaneState())
+
+    def load_state(self, state: SplitNodeState) -> None:
+        """Reconstruct the split hierarchy from a SplitNodeState."""
+        for p in list(self._panes):
+            p.close()
+        self._panes.clear()
+        self.active_pane = None
+        for child in list(self.winfo_children()):
+            child.destroy()
+
+        root_w = self._restore_widget_state(self, state)
+        root_w.pack(fill=tk.BOTH, expand=True)
+        if self._panes:
+            self.active_pane = self._panes[0]
+            self.active_pane.focus()
+
+    def _restore_widget_state(self, parent: tk.Widget, state: SplitNodeState) -> tk.Widget:
+        from clownfish.session.session import TerminalSession
+        from clownfish.transports.ssh import SSHTransport
+
+        if state.is_leaf:
+            session = None
+            target_cwd = state.pane.cwd if state.pane else None
+            if target_cwd and not os.path.isdir(target_cwd):
+                target_cwd = str(Path.home())
+
+            if state.pane and state.pane.ssh:
+                ssh_dict = state.pane.ssh
+                ssh_trans = SSHTransport(
+                    host=ssh_dict.get("host", "localhost"),
+                    port=ssh_dict.get("port", 22),
+                    user=ssh_dict.get("user"),
+                    identity_file=ssh_dict.get("identity_file"),
+                )
+                session = TerminalSession(
+                    cols=self.config.cols,
+                    rows=self.config.rows,
+                    max_scrollback=self.config.max_scrollback,
+                    transport=ssh_trans,
+                    title=state.pane.title or f"🌐 {ssh_dict.get('host')}",
+                    auto_drain=False,
+                )
+
+            pane = self._create_pane(parent, cwd=target_cwd, session=session)
+            if state.pane and state.pane.title:
+                pane.session.title = state.pane.title
+            self._panes.append(pane)
+            return pane
+
+        orient = tk.HORIZONTAL if state.orientation == "horizontal" else tk.VERTICAL
+        paned = tk.PanedWindow(
+            parent,
+            orient=orient,
+            sashwidth=4,
+            sashrelief=tk.FLAT,
+            bg="#2a2a32",
+            bd=0,
+        )
+        for child_state in state.children:
+            child_w = self._restore_widget_state(paned, child_state)
+            paned.add(child_w, stretch="always")
+        return paned
 
     def _handle_pane_focus(self, pane: TerminalPane) -> None:
         self.active_pane = pane

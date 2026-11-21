@@ -81,12 +81,16 @@ flowchart TD
   - Interactive OpenSSH client transport allocating a remote pseudo-terminal (`ssh -tt`).
 
 ### 4. Desktop Frontend (`clownfish.frontends.tkinter`)
-- **`TkTerminalApp`**: Root application controller coordinating multi-tab views, window resizing, global shortcuts (`Cmd+T`, `Cmd+W`, `Cmd+K`, `Cmd+D`, etc.), active job close confirmations, and safe multiline paste prompts.
-- **`TabbedTerminalView`**: Manages independent terminal tabs with a custom tab bar, tab switching, and working-directory inheritance.
-- **`SplitView`**: Manages arbitrary nested horizontal and vertical panes with resizable sash dividers, split cycling (`Cmd+[` / `Cmd+]` or `Alt+[` / `Alt+]`), split equalization (`Cmd+=` / `Ctrl+=`), and active pane border highlights (`#4a90e2`).
+- **`TkTerminalApp`**: Root application controller coordinating multi-tab views, window resizing, global shortcuts (`Cmd+T`, `Cmd+W`, `Cmd+K`, `Cmd+D`, `Cmd+Shift+O`, etc.), active job close confirmations, safe multiline paste prompts, and session layout persistence.
+- **`TabbedTerminalView`**: Manages independent terminal tabs with custom tab bar, tab switching, SSH indicators (`🌐`), and recursive split layout restoration.
+- **`SplitView`**: Manages arbitrary nested horizontal and vertical panes with resizable sash dividers, split cycling (`Cmd+[` / `Cmd+]` or `Alt+[` / `Alt+]`), split equalization (`Cmd+=` / `Ctrl+=`), active pane border highlights (`#4a90e2`), and recursive split-tree serialization.
 - **`TerminalPane`**: Embeds a `TerminalSession`, `TkCanvasRenderer`, `TkInputHandler`, and search overlay bar. Features adaptive render ticks (1ms bursts, 16ms interactive, 100ms idle/hidden tabs) and DECSET 1004 focus reporting.
 - **`TkCanvasRenderer`**: Canvas rendering pipeline with font metrics, dirty row caching, contiguous cell span batching, and z-ordered selection/search highlighting behind legible text.
 - **`TkInputHandler`**: Translates mouse selection (single, double word, triple line), hyperlink clicks, mouse wheel scrolling, and keyboard events into session actions.
+
+### 5. Headless Frontend & Session Persistence (`clownfish.frontends.headless`, `clownfish.session.persistence`)
+- **`HeadlessTerminal`**: Pure Python terminal interface without GUI or display server requirements. Provides full VT100 emulation, programmatic input dispatch (`send_input()`, `send_key()`), screen scraping (`get_text()`, `get_line()`), and polling/waiters (`wait_for_text()`, `wait_for_prompt()`) for automation, AI agents, and CI.
+- **`SessionState`**: Hierarchical dataclass structure (`SessionState` -> `TabState` -> `SplitNodeState` -> `PaneState`) serializing nested split trees, working directories, and remote SSH connection parameters into `~/.config/clownfish/session_state.json`. Automatic save on window close and restoration on startup.
 
 ---
 

@@ -165,6 +165,103 @@ class TabbedTerminalView(tk.Frame):
             if index == self.active_tab_index and self.on_title_changed:
                 self.on_title_changed(title)
 
+    def new_ssh_tab(
+        self,
+        host: str,
+        user: str | None = None,
+        port: int = 22,
+        identity_file: str | None = None,
+        extra_args: list[str] | None = None,
+        title: str | None = None,
+    ) -> SplitView:
+        """Create and switch to a new tab connected to a remote host via SSH."""
+        from clownfish.session.session import TerminalSession
+        from clownfish.transports.ssh import SSHTransport
+
+        ssh_trans = SSHTransport(
+            host=host,
+            port=port,
+            user=user,
+            identity_file=identity_file,
+            extra_args=extra_args,
+            cols=self.config.cols,
+            rows=self.config.rows,
+        )
+        dest_str = f"{user}@{host}" if user else host
+        tab_title = title or f"🌐 {dest_str}"
+
+        session = TerminalSession(
+            cols=self.config.cols,
+            rows=self.config.rows,
+            max_scrollback=self.config.max_scrollback,
+            transport=ssh_trans,
+            title=tab_title,
+            auto_drain=False,
+        )
+
+        split_view = SplitView(
+            self.content_frame,
+            config=self.config,
+            on_pane_focus=self._on_pane_focused,
+            on_pane_close=self._on_pane_closed,
+            on_pane_title=self._on_pane_title_changed,
+        )
+        for p in split_view.panes():
+            p.close()
+        split_view._panes.clear()
+        for child in list(split_view.winfo_children()):
+            child.destroy()
+
+        pane = split_view._create_pane(split_view, session=session)
+        pane.pack(fill=tk.BOTH, expand=True)
+        split_view._panes.append(pane)
+        split_view.active_pane = pane
+
+        self.tabs.append((tab_title, split_view))
+        self.switch_tab(len(self.tabs) - 1)
+        return split_view
+
+    def dump_state(self):
+        """Serialize all tabs and split layouts to a SessionState."""
+        from clownfish.session.persistence import SessionState, TabState
+
+        tabs_state = []
+        for title, sv in self.tabs:
+            tab_state = TabState(title=title, root=sv.dump_state())
+            tabs_state.append(tab_state)
+
+        return SessionState(
+            version=1,
+            active_tab_index=self.active_tab_index,
+            tabs=tabs_state,
+        )
+
+    def load_state(self, state) -> bool:
+        """Restore tabs and split layouts from a SessionState."""
+        if not getattr(state, "tabs", None):
+            return False
+
+        while self.tabs:
+            _, sv = self.tabs.pop()
+            for p in sv.panes():
+                p.close()
+            sv.destroy()
+
+        for tab_state in state.tabs:
+            sv = SplitView(
+                self.content_frame,
+                config=self.config,
+                on_pane_focus=self._on_pane_focused,
+                on_pane_close=self._on_pane_closed,
+                on_pane_title=self._on_pane_title_changed,
+            )
+            sv.load_state(tab_state.root)
+            self.tabs.append((tab_state.title, sv))
+
+        target_idx = max(0, min(len(self.tabs) - 1, state.active_tab_index))
+        self.switch_tab(target_idx)
+        return True
+
     def _render_tab_bar(self) -> None:
         """Redraw tab header buttons in tab bar."""
         for widget in self._tabs_container.winfo_children():
