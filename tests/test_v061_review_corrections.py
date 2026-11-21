@@ -107,10 +107,14 @@ def test_headless_fresh_prompt_wait_sequence() -> None:
 def test_cli_smoke_test_argument() -> None:
     """Verify clownfish --smoke-test creates and destroys Tk window cleanly or reports display state."""
     stdout_buf = io.StringIO()
-    with patch("sys.stdout", stdout_buf):
-        main(["--smoke-test"])
-    output = stdout_buf.getvalue()
-    assert "GUI smoke test" in output
+    stderr_buf = io.StringIO()
+    with patch("sys.stdout", stdout_buf), patch("sys.stderr", stderr_buf):
+        try:
+            main(["--smoke-test"])
+            assert "GUI smoke test passed successfully" in stdout_buf.getvalue()
+        except SystemExit as exc:
+            assert exc.code == 2
+            assert "GUI smoke test display unavailable" in stderr_buf.getvalue()
 
 
 def test_cli_command_execution_headless() -> None:
