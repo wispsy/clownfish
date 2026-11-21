@@ -305,6 +305,7 @@ class TerminalPane(tk.Frame):
             self.screen.mark_all_dirty()
 
     def _render_tick(self) -> None:
+        self._tick_job = None
         has_pending = self.session.drain_events()
         is_viewable = bool(self.winfo_viewable())
 
@@ -325,7 +326,7 @@ class TerminalPane(tk.Frame):
         try:
             delay = 1 if has_pending else (16 if is_viewable else 100)
             self._tick_job = self.after(delay, self._render_tick)
-        except tk.TclError:
+        except (tk.TclError, RuntimeError):
             pass
 
     def _on_title_changed(self, new_title: str) -> None:
@@ -337,9 +338,15 @@ class TerminalPane(tk.Frame):
             self.on_close(self)
 
     def _on_session_event(self) -> None:
-        """Wake UI thread when background PTY events arrive."""
+        """Wake UI thread when background PTY events arrive without accumulating duplicate loops."""
         try:
-            self.after_idle(self._render_tick)
+            if self._tick_job is not None:
+                try:
+                    self.after_cancel(self._tick_job)
+                except (tk.TclError, OSError, RuntimeError):
+                    pass
+                self._tick_job = None
+            self._tick_job = self.after_idle(self._render_tick)
         except (tk.TclError, OSError, RuntimeError):
             pass
 

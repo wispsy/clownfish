@@ -23,7 +23,7 @@ def get_version() -> str:
         for line in f:
             if line.startswith("__version__"):
                 return line.split("=")[1].strip().strip('"').strip("'")
-    return "0.6.1"
+    return "0.6.2"
 
 
 def calculate_sha256(path: Path) -> str:
@@ -55,7 +55,7 @@ def render_formula(version: str, sha256: str) -> str:
 
   test do
     assert_match "clownfish {version}", shell_output("#{{bin}}/clownfish --version")
-    system Formula["python@3.14"].opt_bin/"python3.14", "-c", "import tkinter; import clownfish"
+    system libexec/"bin/python", "-c", "import tkinter; import clownfish"
   end
 end
 """
