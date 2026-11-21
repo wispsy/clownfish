@@ -12,13 +12,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_version_bump_050() -> None:
-    """Verify version is bumped to 0.5.0 across package and metadata."""
-    assert clownfish.__version__ == "0.5.0"
-
+    """Verify version is consistent across package and metadata."""
     pyproject_path = REPO_ROOT / "pyproject.toml"
     with open(pyproject_path, "rb") as f:
         pyproject = tomllib.load(f)
-    assert pyproject["project"]["version"] == "0.5.0"
+    assert clownfish.__version__ == pyproject["project"]["version"]
+    assert clownfish.__version__ >= "0.5.0"
 
 
 def test_cli_version_argument() -> None:
@@ -27,12 +26,12 @@ def test_cli_version_argument() -> None:
     with patch("sys.stdout", stdout_buf):
         main(["--version"])
     output = stdout_buf.getvalue().strip()
-    assert output == "clownfish 0.5.0"
+    assert output == f"clownfish {clownfish.__version__}"
 
     stdout_buf = io.StringIO()
     with patch("sys.stdout", stdout_buf):
         main(["-v"])
-    assert stdout_buf.getvalue().strip() == "clownfish 0.5.0"
+    assert stdout_buf.getvalue().strip() == f"clownfish {clownfish.__version__}"
 
 
 def test_cli_help_argument() -> None:

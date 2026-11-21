@@ -10,6 +10,9 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **Remote SSH Sessions & Integrated Client**: Direct CLI connection via `clownfish ssh [user@]host [-p port] [-i key]`, UI Quick Connect dialog (`Cmd+Shift+O` / `Ctrl+Shift+O`), visual remote tab indicators (`🌐 user@host`), and clean connection teardown.
+- **Session Layout Persistence & Restoration**: Automatically serializes open tabs, nested split hierarchies (horizontal and vertical), and working directories across restarts into `~/.config/clownfish/session_state.json` (`--restore` / `--no-restore`).
+- **Headless Terminal Interface**: Pure Python programmatic interface (`HeadlessTerminal`) with zero display-server/Tkinter requirements, ideal for CI, AI agent automation, and scripted testing (`get_text()`, `wait_for_text()`, `send_input()`).
 - **Split Navigation & Desktop Ergonomics**: Fast split pane keyboard cycling (`Cmd+[` / `Cmd+]` or `Alt+[` / `Alt+]`), split equalization (`Cmd+=` / `Ctrl+=`), high-contrast active-pane visual border highlight (`#4a90e2`), and automatic current working directory inheritance on new tabs (`Cmd+T`) and split panes (`Cmd+D`).
 - **High-Throughput PTY Batching & Idle Throttling**: Bounded PTY event processing (`drain_events(max_bytes=512_000)`) with adaptive tick rate (`after(1)` for pending stream bursts, `after(16)` for interactive typing) and cursor state caching to eliminate canvas churn when idle.
 - **Security & OSC Integrations**: Base64 clipboard get/set (`OSC 52`) with size-bounded payload decoding, current working directory tracking (`OSC 7`), strict allowlisted URL scheme validation for hyperlinks (`OSC 8`), and desktop notifications (`OSC 9` and `OSC 777`).

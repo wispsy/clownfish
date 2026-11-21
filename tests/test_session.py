@@ -244,4 +244,4 @@ def test_public_exports() -> None:
     assert hasattr(clownfish, "PTYTransport")
     assert hasattr(clownfish, "SSHTransport")
     assert hasattr(clownfish, "TerminalConfig")
-    assert clownfish.__version__ == "0.5.0"
+    assert clownfish.__version__ == "0.6.0"

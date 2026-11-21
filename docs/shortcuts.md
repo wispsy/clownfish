@@ -9,6 +9,7 @@ This guide covers all key combinations and pointer interactions supported in Clo
 | Shortcut (macOS) | Shortcut (Linux / Windows) | Action |
 | :--- | :--- | :--- |
 | `Cmd + T` | `Ctrl + Shift + T` | **New Tab**: Open a new terminal tab and switch to it. |
+| `Cmd + Shift + O` | `Ctrl + Shift + O` | **Connect to SSH**: Open Quick Connect dialog to start a remote SSH tab. |
 | `Cmd + W` | `Ctrl + Shift + W` | **Close**: Close active pane (or tab if single pane). |
 | `Ctrl + Tab` | `Ctrl + Tab` | **Next Tab**: Cycle forward to next tab. |
 | `Ctrl + Shift + Tab` | `Ctrl + Shift + Tab` | **Previous Tab**: Cycle backward to previous tab. |
