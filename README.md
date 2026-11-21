@@ -48,16 +48,26 @@ Clownfish offers multiple installation channels: native macOS application bundle
 
 Download the latest release archive from [GitHub Releases](https://github.com/wispsy/clownfish/releases):
 
-1. Download `Clownfish-v0.5.0-macos.zip`.
+1. Download `Clownfish-v0.6.1-macos.zip`.
 2. Unzip the archive:
    ```bash
-   unzip Clownfish-v0.5.0-macos.zip
+   unzip Clownfish-v0.6.1-macos.zip
    ```
 3. Move `Clownfish.app` to `/Applications`:
    ```bash
    mv Clownfish.app /Applications/
    ```
 4. Launch Clownfish from Spotlight, Finder, or from your terminal with `open /Applications/Clownfish.app`.
+
+> [!NOTE]
+> **Platform Support & macOS Gatekeeper**:
+> - **macOS**: Built natively for Apple Silicon (arm64); runs on Intel (x86_64) via source or Rosetta.
+> - **Linux**: Supported out of the box via Python 3.14 with `python3-tk` (X11 / Wayland).
+> - **Code Signing**: Distributed bundles use an ad-hoc signature. If macOS Gatekeeper displays a security notice, clear the quarantine attribute:
+>   ```bash
+>   xattr -cr /Applications/Clownfish.app
+>   ```
+>   or right-click `Clownfish.app` and select **Open**.
 
 ### Option 2: Homebrew Tap (`wispsy/homebrew-tap`)
 

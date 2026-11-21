@@ -35,6 +35,7 @@ class TerminalConfig:
     confirm_close_active_process: bool = True
     confirm_multiline_paste: bool = False
     restore_session: bool = True
+    auto_reconnect_ssh: bool = True
 
     @staticmethod
     def default_config_path() -> Path:

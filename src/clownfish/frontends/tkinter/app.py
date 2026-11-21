@@ -29,30 +29,28 @@ class TkTerminalApp:
         if rows != 24:
             self.config.rows = rows
 
+        initial_title = session.title if session is not None else None
+        auto_create = session is not None or not getattr(self.config, "restore_session", True)
+
         self.tab_view = TabbedTerminalView(
             self.root,
             config=self.config,
             on_title_changed=self._on_title_changed,
             on_all_closed=self._on_all_closed,
+            initial_session=session,
+            initial_title=initial_title,
+            auto_create_tab=auto_create,
         )
         self.tab_view.pack(fill=tk.BOTH, expand=True)
 
-        # If an explicit session was provided, attach it to initial pane
-        if session is not None and self.tab_view.active_pane:
-            self.tab_view.active_pane.session = session
-            self.tab_view.active_pane.screen = session.screen
-            self.tab_view.active_pane.parser = session.parser
-            self.tab_view.active_pane.input_handler.session = session
-            session.on_title_changed = self._on_title_changed
-            session.on_close = self.tab_view.active_pane._on_session_close
-            session.set_event_notifier(self.tab_view.active_pane._on_session_event)
-            session.start()
-        elif getattr(self.config, "restore_session", True):
+        if session is None and getattr(self.config, "restore_session", True):
             from clownfish.session.persistence import SessionState
 
             saved_state = SessionState.load()
             if saved_state is not None:
                 self.tab_view.load_state(saved_state)
+            elif not self.tab_view.tabs:
+                self.tab_view.new_tab()
 
         self._bind_shortcuts()
         self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)

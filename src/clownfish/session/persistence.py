@@ -1,9 +1,19 @@
-"""Session layout persistence and state serialization for Clownfish."""
+"""Session layout persistence and state serialization for Clownfish.
+
+Note:
+    SessionState captures the visual workspace layout (tab titles, recursive split
+    trees, working directories, and SSH destination parameters). On restoration,
+    Clownfish creates fresh shell processes and (optionally) new SSH connections;
+    it does not preserve live remote process states, running background daemons, or
+    foreground child processes.
+"""
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +34,19 @@ class PaneState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PaneState:
-        return cls(
-            cwd=data.get("cwd"),
-            title=data.get("title", "clownfish"),
-            ssh=data.get("ssh"),
-        )
+    def from_dict(cls, data: Any) -> PaneState:
+        if not isinstance(data, dict):
+            return cls()
+        cwd = data.get("cwd")
+        if cwd is not None and not isinstance(cwd, str):
+            cwd = None
+        title = data.get("title", "clownfish")
+        if not isinstance(title, str):
+            title = "clownfish"
+        ssh = data.get("ssh")
+        if ssh is not None and not isinstance(ssh, dict):
+            ssh = None
+        return cls(cwd=cwd, title=title, ssh=ssh)
 
 
 @dataclasses.dataclass
@@ -50,13 +67,33 @@ class SplitNodeState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SplitNodeState:
-        children = [cls.from_dict(c) for c in data.get("children", [])]
-        pane_data = data.get("pane")
-        pane = PaneState.from_dict(pane_data) if pane_data else None
+    def from_dict(cls, data: Any) -> SplitNodeState:
+        if not isinstance(data, dict):
+            return cls(is_leaf=True, pane=PaneState())
+
+        is_leaf = bool(data.get("is_leaf", True))
+        orientation = data.get("orientation", "horizontal")
+        if orientation not in ("horizontal", "vertical"):
+            orientation = "horizontal"
+
+        raw_children = data.get("children", [])
+        children: list[SplitNodeState] = []
+        if isinstance(raw_children, list):
+            for c in raw_children:
+                if isinstance(c, dict):
+                    children.append(cls.from_dict(c))
+
+        raw_pane = data.get("pane")
+        pane = PaneState.from_dict(raw_pane) if (is_leaf or raw_pane) else None
+
+        if not is_leaf and not children:
+            # Container with no valid children degrades to leaf
+            is_leaf = True
+            pane = pane or PaneState()
+
         return cls(
-            is_leaf=data.get("is_leaf", True),
-            orientation=data.get("orientation", "horizontal"),
+            is_leaf=is_leaf,
+            orientation=orientation,
             children=children,
             pane=pane,
         )
@@ -76,10 +113,15 @@ class TabState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TabState:
+    def from_dict(cls, data: Any) -> TabState:
+        if not isinstance(data, dict):
+            return cls()
+        title = data.get("title", "Terminal")
+        if not isinstance(title, str):
+            title = "Terminal"
         root_data = data.get("root", {})
         return cls(
-            title=data.get("title", "Terminal"),
+            title=title,
             root=SplitNodeState.from_dict(root_data),
         )
 
@@ -105,20 +147,64 @@ class SessionState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SessionState:
-        tabs = [TabState.from_dict(t) for t in data.get("tabs", [])]
+    def from_dict(cls, data: Any) -> SessionState:
+        if not isinstance(data, dict):
+            return cls(tabs=[TabState()])
+
+        version = data.get("version", 1)
+        if not isinstance(version, int):
+            version = 1
+
+        active_tab_index = data.get("active_tab_index", 0)
+        if not isinstance(active_tab_index, int) or active_tab_index < 0:
+            active_tab_index = 0
+
+        raw_tabs = data.get("tabs", [])
+        tabs: list[TabState] = []
+        if isinstance(raw_tabs, list):
+            for t in raw_tabs:
+                if isinstance(t, dict):
+                    tabs.append(TabState.from_dict(t))
+
+        if not tabs:
+            tabs.append(TabState())
+
+        if active_tab_index >= len(tabs):
+            active_tab_index = 0
+
         return cls(
-            version=data.get("version", 1),
-            active_tab_index=data.get("active_tab_index", 0),
+            version=version,
+            active_tab_index=active_tab_index,
             tabs=tabs,
         )
 
     def save(self, path: Path | str | None = None) -> Path:
-        """Save session state to JSON file."""
+        """Atomically save session state to JSON file via temporary file and rename."""
         target_path = Path(path) if path is not None else self.default_state_path()
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2)
+
+        with tempfile.NamedTemporaryFile(
+            "w",
+            dir=str(target_path.parent),
+            delete=False,
+            encoding="utf-8",
+            prefix=".session_state_",
+            suffix=".tmp",
+        ) as temp_file:
+            temp_name = temp_file.name
+            try:
+                json.dump(self.to_dict(), temp_file, indent=2)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            except BaseException:
+                if os.path.exists(temp_name):
+                    try:
+                        os.remove(temp_name)
+                    except OSError:
+                        pass
+                raise
+
+        os.replace(temp_name, target_path)
         return target_path
 
     @classmethod
@@ -130,7 +216,7 @@ class SessionState:
         try:
             with open(target_path, encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, dict) and "tabs" in data:
+            if isinstance(data, dict):
                 return cls.from_dict(data)
         except (OSError, json.JSONDecodeError, ValueError):
             return None

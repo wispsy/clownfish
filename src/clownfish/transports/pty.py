@@ -12,6 +12,7 @@ import subprocess
 import sys
 import termios
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 
@@ -45,6 +46,7 @@ class PTYTransport(Transport):
         self._reader_thread: threading.Thread | None = None
         self._write_queue: deque[bytes] = deque()
         self._write_lock = threading.Lock()
+        self._write_cv = threading.Condition(self._write_lock)
 
     def start(self) -> None:
         """Allocate PTY, spawn child process with start_new_session, and launch reader."""
@@ -138,13 +140,15 @@ class PTYTransport(Transport):
 
                 # Process pending writes if descriptor is writable
                 if wlist and self.master_fd is not None:
-                    with self._write_lock:
+                    with self._write_cv:
                         if self._write_queue:
                             chunk = self._write_queue.popleft()
                             try:
                                 written = os.write(self.master_fd, chunk)
                                 if written < len(chunk):
                                     self._write_queue.appendleft(chunk[written:])
+                                else:
+                                    self._write_cv.notify()
                             except (BlockingIOError, InterruptedError):
                                 self._write_queue.appendleft(chunk)
                             except OSError:
@@ -164,18 +168,41 @@ class PTYTransport(Transport):
                 break
 
         self._running = False
+        with self._write_cv:
+            self._write_cv.notify_all()
         if self._on_close:
             self._on_close()
 
     MAX_WRITE_QUEUE_CHUNKS: int = 1000
 
-    def write(self, data: bytes) -> None:
-        """Enqueue bytes for lossless asynchronous writing to the master PTY."""
+    def write(self, data: bytes, timeout: float | None = 10.0) -> None:
+        """Enqueue bytes for lossless asynchronous writing to the master PTY.
+
+        Maintains input ordering and applies explicit backpressure when the queue
+        is saturated (reaches MAX_WRITE_QUEUE_CHUNKS). If backpressure cannot clear
+        before `timeout` expires, raises BufferError to prevent silent data loss.
+        """
         if not self._running or self.master_fd is None or not data:
             return
-        with self._write_lock:
-            if len(self._write_queue) < self.MAX_WRITE_QUEUE_CHUNKS:
-                self._write_queue.append(data)
+
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        with self._write_cv:
+            while len(self._write_queue) >= self.MAX_WRITE_QUEUE_CHUNKS:
+                if not self._running or self.master_fd is None:
+                    return
+                remaining = None
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise BufferError(
+                            "PTY write queue saturated: backpressure timeout exceeded; "
+                            "write cannot be completed without dropping input."
+                        )
+                self._write_cv.wait(timeout=remaining)
+
+            if not self._running or self.master_fd is None:
+                return
+            self._write_queue.append(data)
 
     def resize(self, cols: int, rows: int) -> None:
         """Update PTY window size."""
@@ -192,8 +219,9 @@ class PTYTransport(Transport):
     def close(self) -> None:
         """Terminate the PTY, clear write queue, and reap the child process."""
         self._running = False
-        with self._write_lock:
+        with self._write_cv:
             self._write_queue.clear()
+            self._write_cv.notify_all()
 
         fd = self.master_fd
         proc = self._proc

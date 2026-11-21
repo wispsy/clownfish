@@ -26,16 +26,19 @@ class HeadlessTerminal:
         transport: Transport | None = None,
         cwd: str | None = None,
         title: str = "clownfish-headless",
+        auto_drain: bool = False,
     ) -> None:
         self.cols = cols
         self.rows = rows
+        self.auto_drain = auto_drain
+        self._prompt_marker_index = 0
         self.session = TerminalSession(
             cols=cols,
             rows=rows,
             max_scrollback=max_scrollback,
             transport=transport,
             title=title,
-            auto_drain=True,
+            auto_drain=auto_drain,
             cwd=cwd,
         )
 
@@ -85,7 +88,7 @@ class HeadlessTerminal:
 
         if include_scrollback:
             for row in self.session.screen.scrollback:
-                line_text = "".join(cell.char for cell in row.cells if cell.width != 0)
+                line_text = "".join(cell.char for cell in row if cell.width != 0)
                 lines.append(line_text.rstrip() if rstrip else line_text)
 
         last_row = self.session.rows if end_row is None else min(self.session.rows, end_row)
@@ -120,19 +123,49 @@ class HeadlessTerminal:
         self.drain()
         return bool(regex.search(self.get_text(include_scrollback=include_scrollback)))
 
-    def wait_for_prompt(self, timeout: float = 5.0, interval: float = 0.05) -> bool:
-        """Wait until an OSC 133 semantic prompt mark or common prompt symbol appears."""
+    def wait_for_prompt(
+        self,
+        timeout: float = 5.0,
+        interval: float = 0.05,
+        since_marker: int | None = None,
+    ) -> bool:
+        """Wait until a new OSC 133 semantic prompt mark or fresh shell prompt appears.
+
+        If `since_marker` is specified, waits until total prompt markers exceed that count.
+        Otherwise, tracks the sequence of prompts to ensure repeated waits don't return early.
+        """
+        baseline = since_marker if since_marker is not None else self._prompt_marker_index
         deadline = time.monotonic() + timeout
+        initial_text = self.get_text()
+
         while time.monotonic() < deadline:
             self.drain()
-            if self.session.screen.prompt_markers:
+            current_markers = len(self.session.screen.prompt_markers)
+            if current_markers > baseline:
+                self._prompt_marker_index = current_markers
                 return True
-            # Also check text for common prompt terminators ($ or % or #)
-            screen_text = self.get_text()
-            if re.search(r"[$%#>]\s*$", screen_text, re.MULTILINE):
-                return True
+
+            # If no OSC 133 markers exist, check text for common shell prompt terminators ($ or % or #)
+            if current_markers == 0:
+                screen_text = self.get_text()
+                if re.search(r"[$%#>]\s*$", screen_text, re.MULTILINE) and (baseline == 0 or screen_text != initial_text):
+                    self._prompt_marker_index = 1
+                    return True
             time.sleep(interval)
-        return bool(self.session.screen.prompt_markers)
+
+        self.drain()
+        current_markers = len(self.session.screen.prompt_markers)
+        if current_markers > baseline:
+            self._prompt_marker_index = current_markers
+            return True
+        return False
+
+    def run_command(self, cmd: str, timeout: float = 10.0) -> str:
+        """Send command, wait for prompt to return, and return all text output."""
+        baseline = len(self.session.screen.prompt_markers)
+        self.send_input(cmd.rstrip("\n") + "\n")
+        self.wait_for_prompt(timeout=timeout, since_marker=baseline)
+        return self.get_text(include_scrollback=True)
 
     def is_alive(self) -> bool:
         """Return True if the underlying session transport process is active."""

@@ -28,6 +28,8 @@ class SplitView(tk.Frame):
         on_pane_close: Callable[[TerminalPane], None] | None = None,
         on_pane_title: Callable[[TerminalPane, str], None] | None = None,
         cwd: str | None = None,
+        initial_session: TerminalSession | None = None,
+        create_initial_pane: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(master, bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg), **kwargs)
@@ -39,14 +41,14 @@ class SplitView(tk.Frame):
         self._panes: list[TerminalPane] = []
         self.active_pane: TerminalPane | None = None
 
-        # Create initial primary pane
-        initial_cwd = cwd
-        if initial_cwd and not os.path.isdir(initial_cwd):
-            initial_cwd = str(Path.home())
-        initial_pane = self._create_pane(self, cwd=initial_cwd)
-        initial_pane.pack(fill=tk.BOTH, expand=True)
-        self._panes.append(initial_pane)
-        self.active_pane = initial_pane
+        if create_initial_pane:
+            initial_cwd = cwd
+            if initial_cwd and not os.path.isdir(initial_cwd):
+                initial_cwd = str(Path.home())
+            initial_pane = self._create_pane(self, cwd=initial_cwd, session=initial_session)
+            initial_pane.pack(fill=tk.BOTH, expand=True)
+            self._panes.append(initial_pane)
+            self.active_pane = initial_pane
 
     def _create_pane(
         self,
@@ -141,21 +143,25 @@ class SplitView(tk.Frame):
                 target_cwd = str(Path.home())
 
             if state.pane and state.pane.ssh:
-                ssh_dict = state.pane.ssh
-                ssh_trans = SSHTransport(
-                    host=ssh_dict.get("host", "localhost"),
-                    port=ssh_dict.get("port", 22),
-                    user=ssh_dict.get("user"),
-                    identity_file=ssh_dict.get("identity_file"),
-                )
-                session = TerminalSession(
-                    cols=self.config.cols,
-                    rows=self.config.rows,
-                    max_scrollback=self.config.max_scrollback,
-                    transport=ssh_trans,
-                    title=state.pane.title or f"🌐 {ssh_dict.get('host')}",
-                    auto_drain=False,
-                )
+                if getattr(self.config, "auto_reconnect_ssh", True):
+                    ssh_dict = state.pane.ssh
+                    ssh_trans = SSHTransport(
+                        host=ssh_dict.get("host", "localhost"),
+                        port=ssh_dict.get("port", 22),
+                        user=ssh_dict.get("user"),
+                        identity_file=ssh_dict.get("identity_file"),
+                    )
+                    session = TerminalSession(
+                        cols=self.config.cols,
+                        rows=self.config.rows,
+                        max_scrollback=self.config.max_scrollback,
+                        transport=ssh_trans,
+                        title=state.pane.title or f"🌐 {ssh_dict.get('host')}",
+                        auto_drain=False,
+                    )
+                else:
+                    # SSH auto-reconnect disabled; open local shell with title indicator
+                    session = None
 
             pane = self._create_pane(parent, cwd=target_cwd, session=session)
             if state.pane and state.pane.title:

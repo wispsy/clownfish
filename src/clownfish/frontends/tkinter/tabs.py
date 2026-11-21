@@ -6,10 +6,14 @@ import os
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from clownfish.config import TerminalConfig
 from clownfish.frontends.tkinter.pane import TerminalPane
 from clownfish.frontends.tkinter.split import SplitView
+
+if TYPE_CHECKING:
+    from clownfish.session.session import TerminalSession
 
 
 class TabbedTerminalView(tk.Frame):
@@ -21,6 +25,9 @@ class TabbedTerminalView(tk.Frame):
         config: TerminalConfig | None = None,
         on_title_changed: Callable[[str], None] | None = None,
         on_all_closed: Callable[[], None] | None = None,
+        initial_session: TerminalSession | None = None,
+        initial_title: str | None = None,
+        auto_create_tab: bool = True,
         **kwargs,
     ) -> None:
         self.config = config or TerminalConfig()
@@ -61,8 +68,9 @@ class TabbedTerminalView(tk.Frame):
         self.content_frame = tk.Frame(self, bg=self.config.tab_active_bg)
         self.content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Create first tab
-        self.new_tab()
+        # Create first tab if requested
+        if auto_create_tab:
+            self.new_tab(title=initial_title, initial_session=initial_session)
 
     @property
     def active_split_view(self) -> SplitView | None:
@@ -77,7 +85,12 @@ class TabbedTerminalView(tk.Frame):
         sv = self.active_split_view
         return sv.active_pane if sv else None
 
-    def new_tab(self, title: str | None = None, cwd: str | None = None) -> SplitView:
+    def new_tab(
+        self,
+        title: str | None = None,
+        cwd: str | None = None,
+        initial_session: TerminalSession | None = None,
+    ) -> SplitView:
         """Create and switch to a new tab, inheriting CWD from active pane if available."""
         tab_idx = len(self.tabs) + 1
         tab_title = title or f"Terminal {tab_idx}"
@@ -94,6 +107,7 @@ class TabbedTerminalView(tk.Frame):
             on_pane_close=self._on_pane_closed,
             on_pane_title=self._on_pane_title_changed,
             cwd=target_cwd,
+            initial_session=initial_session,
         )
 
         self.tabs.append((tab_title, split_view))
@@ -199,27 +213,7 @@ class TabbedTerminalView(tk.Frame):
             auto_drain=False,
         )
 
-        split_view = SplitView(
-            self.content_frame,
-            config=self.config,
-            on_pane_focus=self._on_pane_focused,
-            on_pane_close=self._on_pane_closed,
-            on_pane_title=self._on_pane_title_changed,
-        )
-        for p in split_view.panes():
-            p.close()
-        split_view._panes.clear()
-        for child in list(split_view.winfo_children()):
-            child.destroy()
-
-        pane = split_view._create_pane(split_view, session=session)
-        pane.pack(fill=tk.BOTH, expand=True)
-        split_view._panes.append(pane)
-        split_view.active_pane = pane
-
-        self.tabs.append((tab_title, split_view))
-        self.switch_tab(len(self.tabs) - 1)
-        return split_view
+        return self.new_tab(title=tab_title, initial_session=session)
 
     def dump_state(self):
         """Serialize all tabs and split layouts to a SessionState."""
@@ -254,6 +248,7 @@ class TabbedTerminalView(tk.Frame):
                 on_pane_focus=self._on_pane_focused,
                 on_pane_close=self._on_pane_closed,
                 on_pane_title=self._on_pane_title_changed,
+                create_initial_pane=False,
             )
             sv.load_state(tab_state.root)
             self.tabs.append((tab_state.title, sv))
@@ -309,6 +304,8 @@ class TabbedTerminalView(tk.Frame):
                 break
 
     def _on_pane_closed(self, pane: TerminalPane) -> None:
-        sv = self.active_split_view
-        if sv and not sv.panes():
-            self.close_tab(self.active_tab_index)
+        """Clean up tabs when panes close, correctly handling background tab disconnects."""
+        for idx in range(len(self.tabs) - 1, -1, -1):
+            _, sv = self.tabs[idx]
+            if not sv.panes():
+                self.close_tab(idx)

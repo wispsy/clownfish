@@ -8,6 +8,7 @@ class Clownfish < Formula
   license "MIT"
 
   depends_on "python@3.14"
+  depends_on "python-tk@3.14"
 
   def install
     virtualenv_install_with_resources
@@ -15,5 +16,6 @@ class Clownfish < Formula
 
   test do
     assert_match "clownfish 0.5.0", shell_output("#{bin}/clownfish --version")
+    system Formula["python@3.14"].opt_bin/"python3.14", "-c", "import tkinter; import clownfish"
   end
 end
