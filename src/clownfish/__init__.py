@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 __all__ = [
     "Cell",
     "HeadlessTerminal",
@@ -91,6 +91,84 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def _run_headless_bridge(
+    transport: Transport | None = None,
+    command: str | None = None,
+    cols: int = 80,
+    rows: int = 24,
+) -> int:
+    """Stream bidirectional I/O for headless CLI and automated command execution."""
+    import os
+    import select
+    import subprocess
+    import sys
+    import threading
+    import time
+
+    from clownfish.transports.pty import PTYTransport
+
+    if transport is None:
+        if command is not None:
+            shell = os.environ.get("SHELL") or ("/bin/zsh" if sys.platform == "darwin" else "/bin/bash")
+            cmd = [shell, "-c", command]
+        else:
+            cmd = None
+        transport = PTYTransport(command=cmd, cols=cols, rows=rows)
+
+    def on_pty_data(data: bytes) -> None:
+        try:
+            if hasattr(sys.stdout, "buffer"):
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            else:
+                sys.stdout.write(data.decode("utf-8", errors="replace"))
+                sys.stdout.flush()
+        except OSError:
+            pass
+
+    transport.set_callbacks(on_data=on_pty_data)
+    transport.start()
+
+    stop_event = threading.Event()
+
+    def stdin_forwarder() -> None:
+        while not stop_event.is_set() and transport.is_alive():
+            try:
+                if sys.platform != "win32" and hasattr(sys.stdin, "fileno"):
+                    try:
+                        rlist, _, _ = select.select([sys.stdin.fileno()], [], [], 0.05)
+                        if not rlist:
+                            continue
+                    except (OSError, ValueError):
+                        pass
+                if hasattr(sys.stdin, "buffer"):
+                    chunk = sys.stdin.buffer.read(4096)
+                else:
+                    text_chunk = sys.stdin.read(4096)
+                    chunk = text_chunk.encode("utf-8") if text_chunk else b""
+                if not chunk:
+                    break
+                transport.write(chunk)
+            except (OSError, ValueError):
+                break
+
+    if command is None and hasattr(sys.stdin, "read"):
+        stdin_thread = threading.Thread(target=stdin_forwarder, daemon=True)
+        stdin_thread.start()
+
+    while transport.is_alive():
+        time.sleep(0.05)
+
+    stop_event.set()
+    exit_code = 0
+    if isinstance(transport, PTYTransport) and transport._proc:
+        try:
+            exit_code = transport._proc.wait(timeout=0.2) or 0
+        except (subprocess.TimeoutExpired, OSError):
+            exit_code = transport._proc.poll() or 0
+    return exit_code
+
+
 def main(args: list[str] | None = None) -> None:
     """Launch clownfish terminal emulator."""
     import sys
@@ -108,6 +186,16 @@ def main(args: list[str] | None = None) -> None:
         os.execvp(argv[1], argv[1:])
         return
 
+    if argv and argv[0] == "--smoke-test":
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.title("clownfish-smoke-test")
+        root.update_idletasks()
+        root.destroy()
+        print("GUI smoke test passed successfully")
+        return
+
     if argv and argv[0] in ("-v", "--version"):
         print(f"clownfish {__version__}")
         return
@@ -119,10 +207,26 @@ def main(args: list[str] | None = None) -> None:
         print("\nOptions:")
         print("  -v, --version       Show version number and exit")
         print("  -h, --help          Show this help message and exit")
+        print("  -c, --command CMD   Run command non-interactively in headless mode and exit")
         print("  --headless          Run in headless mode without GUI")
         print("  --restore           Restore saved session tabs and splits")
         print("  --no-restore        Start a fresh session, ignoring saved state")
+        print("  --reconnect-ssh     Auto-reconnect SSH tabs on session restore (default)")
+        print("  --no-reconnect-ssh  Do not auto-reconnect SSH tabs on restore")
+        print("  --smoke-test        Test GUI window initialization and exit immediately")
         return
+
+    command_to_run: str | None = None
+    if "-c" in argv:
+        c_idx = argv.index("-c")
+        if c_idx + 1 < len(argv):
+            command_to_run = argv[c_idx + 1]
+            argv = argv[:c_idx] + argv[c_idx + 2:]
+    elif "--command" in argv:
+        c_idx = argv.index("--command")
+        if c_idx + 1 < len(argv):
+            command_to_run = argv[c_idx + 1]
+            argv = argv[:c_idx] + argv[c_idx + 2:]
 
     from clownfish.config import TerminalConfig
 
@@ -131,6 +235,17 @@ def main(args: list[str] | None = None) -> None:
         config.restore_session = False
     elif "--restore" in argv:
         config.restore_session = True
+
+    if "--no-reconnect-ssh" in argv:
+        config.auto_reconnect_ssh = False
+    elif "--reconnect-ssh" in argv:
+        config.auto_reconnect_ssh = True
+
+    if command_to_run is not None:
+        code = _run_headless_bridge(command=command_to_run, cols=config.cols, rows=config.rows)
+        if code != 0:
+            sys.exit(code)
+        return
 
     if argv and argv[0] == "ssh":
         import argparse
@@ -160,14 +275,9 @@ def main(args: list[str] | None = None) -> None:
         )
 
         if args_parsed.headless or "--headless" in argv:
-            from clownfish.frontends.headless import HeadlessTerminal
-
-            with HeadlessTerminal(transport=ssh_trans) as term:
-                import time
-
-                while term.is_alive():
-                    term.drain()
-                    time.sleep(0.05)
+            code = _run_headless_bridge(transport=ssh_trans, cols=config.cols, rows=config.rows)
+            if code != 0:
+                sys.exit(code)
             return
 
         import tkinter as tk
@@ -191,14 +301,9 @@ def main(args: list[str] | None = None) -> None:
         return
 
     if argv and argv[0] == "--headless":
-        from clownfish.frontends.headless import HeadlessTerminal
-
-        with HeadlessTerminal(cols=config.cols, rows=config.rows) as term:
-            import time
-
-            while term.is_alive():
-                term.drain()
-                time.sleep(0.05)
+        code = _run_headless_bridge(cols=config.cols, rows=config.rows)
+        if code != 0:
+            sys.exit(code)
         return
 
     import tkinter as tk

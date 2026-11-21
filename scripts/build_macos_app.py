@@ -27,7 +27,7 @@ def get_version() -> str:
         for line in f:
             if line.startswith("__version__"):
                 return line.split("=")[1].strip().strip('"').strip("'")
-    return "0.5.0"
+    return "0.6.1"
 
 
 def generate_icns() -> Path:
@@ -166,6 +166,12 @@ def verify_app(app_path: Path, expected_version: str) -> None:
     print(f"Executable version output: {output}")
     if expected_version not in output:
         raise ValueError(f"Expected version {expected_version} in output, got: {output}")
+
+    print("Verifying graphical environment with smoke test...")
+    smoke_res = subprocess.run([str(executable), "--smoke-test"], capture_output=True, text=True, check=True)
+    if "GUI smoke test passed successfully" not in smoke_res.stdout:
+        raise RuntimeError(f"GUI smoke test failed: {smoke_res.stdout} {smoke_res.stderr}")
+    print("Graphical environment verified successfully!")
     print("Verification succeeded!")
 
 

@@ -53,6 +53,7 @@ class TerminalPane(tk.Frame):
         self.session.on_clipboard_write = self._on_clipboard_write
         self.session.on_clipboard_query = self._on_clipboard_query
         self.session.on_notification = self._on_notification
+        self.session.set_event_notifier(self._on_session_event)
 
         self.screen = self.session.screen
         self.parser = self.session.parser
@@ -339,7 +340,7 @@ class TerminalPane(tk.Frame):
         """Wake UI thread when background PTY events arrive."""
         try:
             self.after_idle(self._render_tick)
-        except (tk.TclError, OSError):
+        except (tk.TclError, OSError, RuntimeError):
             pass
 
     def _on_clipboard_write(self, selection: str, text: str) -> None:
@@ -381,10 +382,14 @@ class TerminalPane(tk.Frame):
 
     def close(self) -> None:
         """Close this pane and clean up session and callbacks."""
+        self.session.set_event_notifier(None)
         if self._tick_job:
             try:
                 self.after_cancel(self._tick_job)
-            except (tk.TclError, OSError):
+            except (tk.TclError, OSError, RuntimeError):
                 pass
         self.session.close()
-        self.destroy()
+        try:
+            self.destroy()
+        except (tk.TclError, OSError, RuntimeError):
+            pass

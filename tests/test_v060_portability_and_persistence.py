@@ -22,8 +22,8 @@ from clownfish.transports.ssh import SSHTransport
 
 
 def test_version_bump_060() -> None:
-    """Verify package version is 0.6.0."""
-    assert clownfish.__version__ == "0.6.0"
+    """Verify package version is at least 0.6.0."""
+    assert clownfish.__version__ >= "0.6.0"
 
 
 def test_headless_terminal_live_execution() -> None:
