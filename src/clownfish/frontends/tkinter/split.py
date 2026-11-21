@@ -165,7 +165,15 @@ class SplitView(tk.Frame):
 
             pane = self._create_pane(parent, cwd=target_cwd, session=session)
             if state.pane and state.pane.title:
-                pane.session.title = state.pane.title
+                if state.pane.ssh and not getattr(self.config, "auto_reconnect_ssh", True):
+                    remote_dest = state.pane.ssh.get("host", "remote")
+                    pane.session.title = f"[Disconnected: {remote_dest}] (Local Shell)"
+                    pane.session.feed_text(
+                        f"\r\n\x1b[33;1m[Notice: Saved remote session '{state.pane.title}' was restored disconnected "
+                        f"(auto_reconnect_ssh=False). Running local shell.]\x1b[0m\r\n\r\n"
+                    )
+                else:
+                    pane.session.title = state.pane.title
             self._panes.append(pane)
             return pane
 

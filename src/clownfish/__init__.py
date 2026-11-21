@@ -20,7 +20,7 @@ from clownfish.session.transport import Transport
 from clownfish.syntax import highlight_code, is_syntax_available, print_highlighted
 
 if TYPE_CHECKING:
-    from clownfish.frontends.headless import HeadlessTerminal
+    from clownfish.frontends.headless import CommandResult, HeadlessTerminal
     from clownfish.frontends.tkinter.app import TkTerminalApp
     from clownfish.frontends.tkinter.pane import TerminalPane
     from clownfish.frontends.tkinter.split import SplitView
@@ -28,9 +28,10 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 __all__ = [
     "Cell",
+    "CommandResult",
     "HeadlessTerminal",
     "PTYTransport",
     "PromptMarker",
@@ -60,10 +61,10 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    if name == "HeadlessTerminal":
-        from clownfish.frontends.headless import HeadlessTerminal
+    if name in ("CommandResult", "HeadlessTerminal"):
+        from clownfish.frontends.headless import CommandResult, HeadlessTerminal
 
-        return HeadlessTerminal
+        return CommandResult if name == "CommandResult" else HeadlessTerminal
     if name == "TkTerminalApp":
         from clownfish.frontends.tkinter.app import TkTerminalApp
 
@@ -91,29 +92,77 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _run_headless_bridge(
-    transport: Transport | None = None,
-    command: str | None = None,
-    cols: int = 80,
-    rows: int = 24,
-) -> int:
-    """Stream bidirectional I/O for headless CLI and automated command execution."""
+def _run_command_headless(command: str, cols: int = 80, rows: int = 24) -> int:
+    """Execute a single command non-interactively in headless PTY and stream output."""
     import os
-    import select
     import subprocess
     import sys
-    import threading
     import time
 
     from clownfish.transports.pty import PTYTransport
 
-    if transport is None:
-        if command is not None:
-            shell = os.environ.get("SHELL") or ("/bin/zsh" if sys.platform == "darwin" else "/bin/bash")
-            cmd = [shell, "-c", command]
-        else:
-            cmd = None
-        transport = PTYTransport(command=cmd, cols=cols, rows=rows)
+    shell = os.environ.get("SHELL") or ("/bin/zsh" if sys.platform == "darwin" else "/bin/bash")
+    transport = PTYTransport(command=[shell, "-c", command], cols=cols, rows=rows)
+
+    def on_pty_data(data: bytes) -> None:
+        try:
+            if hasattr(sys.stdout, "buffer"):
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            else:
+                sys.stdout.write(data.decode("utf-8", errors="replace"))
+                sys.stdout.flush()
+        except OSError:
+            pass
+
+    transport.set_callbacks(on_data=on_pty_data)
+    transport.start()
+
+    while transport.is_alive():
+        time.sleep(0.02)
+
+    exit_code = 0
+    if transport._proc:
+        try:
+            exit_code = transport._proc.wait(timeout=0.2) or 0
+        except (subprocess.TimeoutExpired, OSError):
+            exit_code = transport._proc.poll() or 0
+    return exit_code
+
+
+def _run_interactive_tty_bridge(
+    transport: Transport,
+    cols: int = 80,
+    rows: int = 24,
+) -> int:
+    """Run interactive bidirectional TTY bridge with raw-mode and window-size propagation."""
+    import os
+    import select
+    import signal
+    import subprocess
+    import sys
+    import termios
+    import threading
+    import time
+    import tty
+
+    from clownfish.transports.pty import PTYTransport
+
+    is_tty = hasattr(sys.stdin, "fileno") and sys.stdin.isatty() and sys.platform != "win32"
+    old_termios = None
+
+    if is_tty:
+        try:
+            old_termios = termios.tcgetattr(sys.stdin.fileno())
+            try:
+                import shutil
+
+                ts = shutil.get_terminal_size()
+                transport.resize(ts.columns, ts.lines)
+            except OSError:
+                pass
+        except (termios.error, OSError):
+            is_tty = False
 
     def on_pty_data(data: bytes) -> None:
         try:
@@ -130,36 +179,69 @@ def _run_headless_bridge(
     transport.start()
 
     stop_event = threading.Event()
+    old_sigwinch = None
 
-    def stdin_forwarder() -> None:
+    if is_tty and hasattr(signal, "SIGWINCH"):
+
+        def handle_sigwinch(signum, frame):
+            try:
+                import shutil
+
+                ts = shutil.get_terminal_size()
+                transport.resize(ts.columns, ts.lines)
+            except OSError:
+                pass
+
+        try:
+            old_sigwinch = signal.signal(signal.SIGWINCH, handle_sigwinch)
+        except (ValueError, OSError):
+            pass
+
+    def stdin_reader() -> None:
+        stdin_fd = sys.stdin.fileno() if hasattr(sys.stdin, "fileno") else None
         while not stop_event.is_set() and transport.is_alive():
             try:
-                if sys.platform != "win32" and hasattr(sys.stdin, "fileno"):
-                    try:
-                        rlist, _, _ = select.select([sys.stdin.fileno()], [], [], 0.05)
-                        if not rlist:
-                            continue
-                    except (OSError, ValueError):
-                        pass
-                if hasattr(sys.stdin, "buffer"):
-                    chunk = sys.stdin.buffer.read(4096)
+                if stdin_fd is not None:
+                    rlist, _, _ = select.select([stdin_fd], [], [], 0.05)
+                    if not rlist:
+                        continue
+                    chunk = os.read(stdin_fd, 1024)
+                    if not chunk:
+                        break
+                    transport.write(chunk)
                 else:
-                    text_chunk = sys.stdin.read(4096)
-                    chunk = text_chunk.encode("utf-8") if text_chunk else b""
-                if not chunk:
-                    break
-                transport.write(chunk)
+                    text = sys.stdin.read(1)
+                    if not text:
+                        break
+                    transport.write(text.encode("utf-8"))
             except (OSError, ValueError):
                 break
 
-    if command is None and hasattr(sys.stdin, "read"):
-        stdin_thread = threading.Thread(target=stdin_forwarder, daemon=True)
-        stdin_thread.start()
+    if is_tty and old_termios is not None:
+        try:
+            tty.setraw(sys.stdin.fileno())
+        except (termios.error, OSError):
+            pass
 
-    while transport.is_alive():
-        time.sleep(0.05)
+    stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
+    stdin_thread.start()
 
-    stop_event.set()
+    try:
+        while transport.is_alive():
+            time.sleep(0.02)
+    finally:
+        stop_event.set()
+        if is_tty and old_termios is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_termios)
+            except (termios.error, OSError):
+                pass
+        if old_sigwinch is not None and hasattr(signal, "SIGWINCH"):
+            try:
+                signal.signal(signal.SIGWINCH, old_sigwinch)
+            except (ValueError, OSError):
+                pass
+
     exit_code = 0
     if isinstance(transport, PTYTransport) and transport._proc:
         try:
@@ -195,9 +277,10 @@ def main(args: list[str] | None = None) -> None:
             root.update_idletasks()
             root.destroy()
             print("GUI smoke test passed successfully")
+            return
         except (tk.TclError, RuntimeError) as err:
-            print(f"GUI smoke test display unavailable: {err}")
-        return
+            print(f"GUI smoke test display unavailable: {err}", file=sys.stderr)
+            sys.exit(2)
 
     if argv and argv[0] in ("-v", "--version"):
         print(f"clownfish {__version__}")
@@ -245,7 +328,7 @@ def main(args: list[str] | None = None) -> None:
         config.auto_reconnect_ssh = True
 
     if command_to_run is not None:
-        code = _run_headless_bridge(command=command_to_run, cols=config.cols, rows=config.rows)
+        code = _run_command_headless(command_to_run, cols=config.cols, rows=config.rows)
         if code != 0:
             sys.exit(code)
         return
@@ -278,7 +361,7 @@ def main(args: list[str] | None = None) -> None:
         )
 
         if args_parsed.headless or "--headless" in argv:
-            code = _run_headless_bridge(transport=ssh_trans, cols=config.cols, rows=config.rows)
+            code = _run_interactive_tty_bridge(ssh_trans, cols=config.cols, rows=config.rows)
             if code != 0:
                 sys.exit(code)
             return
@@ -304,7 +387,10 @@ def main(args: list[str] | None = None) -> None:
         return
 
     if argv and argv[0] == "--headless":
-        code = _run_headless_bridge(cols=config.cols, rows=config.rows)
+        from clownfish.transports.pty import PTYTransport
+
+        local_trans = PTYTransport(cols=config.cols, rows=config.rows)
+        code = _run_interactive_tty_bridge(local_trans, cols=config.cols, rows=config.rows)
         if code != 0:
             sys.exit(code)
         return

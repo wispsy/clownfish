@@ -29,8 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_version_bump_061() -> None:
-    """Verify package version is 0.6.1 across all files."""
-    assert clownfish.__version__ == "0.6.1"
+    """Verify package version is at least 0.6.1."""
+    assert clownfish.__version__ >= "0.6.1"
 
 
 def test_pty_write_backpressure_and_saturation() -> None:
@@ -107,10 +107,14 @@ def test_headless_fresh_prompt_wait_sequence() -> None:
 def test_cli_smoke_test_argument() -> None:
     """Verify clownfish --smoke-test creates and destroys Tk window cleanly or reports display state."""
     stdout_buf = io.StringIO()
-    with patch("sys.stdout", stdout_buf):
-        main(["--smoke-test"])
-    output = stdout_buf.getvalue()
-    assert "GUI smoke test" in output
+    stderr_buf = io.StringIO()
+    with patch("sys.stdout", stdout_buf), patch("sys.stderr", stderr_buf):
+        try:
+            main(["--smoke-test"])
+            assert "GUI smoke test passed successfully" in stdout_buf.getvalue()
+        except SystemExit as exc:
+            assert exc.code == 2
+            assert "GUI smoke test display unavailable" in stderr_buf.getvalue()
 
 
 def test_cli_command_execution_headless() -> None:
@@ -263,7 +267,8 @@ def test_homebrew_formula_dependencies_and_smoke_test() -> None:
         sys.path.insert(0, str(REPO_ROOT))
     from scripts.publish_homebrew import render_formula
 
-    formula_str = render_formula("0.6.1", "dummy_sha256")
+    formula_str = render_formula("0.6.2", "dummy_sha256")
     assert 'depends_on "python@3.14"' in formula_str
     assert 'depends_on "python-tk@3.14"' in formula_str
+    assert 'libexec/"bin/python"' in formula_str
     assert "import tkinter; import clownfish" in formula_str

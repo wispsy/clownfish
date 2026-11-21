@@ -146,6 +146,8 @@ class TabbedTerminalView(tk.Frame):
         if not (0 <= target_idx < len(self.tabs)):
             return
 
+        active_sv = self.active_split_view
+
         _, sv = self.tabs.pop(target_idx)
         for pane in sv.panes():
             pane.close()
@@ -156,9 +158,40 @@ class TabbedTerminalView(tk.Frame):
                 self.on_all_closed()
             return
 
-        # Adjust active index
-        new_idx = min(target_idx, len(self.tabs) - 1)
+        # If a background tab closed, keep the active tab focused
+        if sv is not active_sv:
+            new_idx = next((i for i, (_, s) in enumerate(self.tabs) if s is active_sv), 0)
+        else:
+            new_idx = min(target_idx, len(self.tabs) - 1)
+
         self.switch_tab(new_idx)
+
+    def request_close_tab(self, index: int) -> bool:
+        """Close tab at index, asking for confirmation if running processes are active."""
+        if not (0 <= index < len(self.tabs)):
+            return False
+
+        if getattr(self.config, "confirm_close_active_process", True):
+            sv = self.tabs[index][1]
+            has_running = any(pane.has_foreground_process() for pane in sv.panes())
+            if has_running:
+                from tkinter import messagebox
+
+                tab_title = self.tabs[index][0]
+                try:
+                    confirmed = messagebox.askyesno(
+                        "Close Tab?",
+                        f"A process is currently running in tab '{tab_title}'.\n"
+                        "Closing it will terminate the process. Close anyway?",
+                        parent=self.winfo_toplevel(),
+                    )
+                    if not confirmed:
+                        return False
+                except (tk.TclError, OSError, RuntimeError):
+                    return False
+
+        self.close_tab(index)
+        return True
 
     def next_tab(self) -> None:
         """Switch to next tab cycling forward."""
@@ -292,7 +325,7 @@ class TabbedTerminalView(tk.Frame):
                 cursor="arrow",
             )
             close_lbl.pack(side=tk.LEFT)
-            close_lbl.bind("<Button-1>", lambda e, i=idx: self.close_tab(i))
+            close_lbl.bind("<Button-1>", lambda e, i=idx: self.request_close_tab(i))
 
     def _on_pane_focused(self, pane: TerminalPane) -> None:
         pass

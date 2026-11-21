@@ -16,6 +16,6 @@ class Clownfish < Formula
 
   test do
     assert_match "clownfish 0.5.0", shell_output("#{bin}/clownfish --version")
-    system Formula["python@3.14"].opt_bin/"python3.14", "-c", "import tkinter; import clownfish"
+    system libexec/"bin/python", "-c", "import tkinter; import clownfish"
   end
 end

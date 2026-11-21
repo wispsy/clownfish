@@ -48,10 +48,10 @@ Clownfish offers multiple installation channels: native macOS application bundle
 
 Download the latest release archive from [GitHub Releases](https://github.com/wispsy/clownfish/releases):
 
-1. Download `Clownfish-v0.6.1-macos.zip`.
+1. Download `Clownfish-v0.6.2-macos.zip`.
 2. Unzip the archive:
    ```bash
-   unzip Clownfish-v0.6.1-macos.zip
+   unzip Clownfish-v0.6.2-macos.zip
    ```
 3. Move `Clownfish.app` to `/Applications`:
    ```bash

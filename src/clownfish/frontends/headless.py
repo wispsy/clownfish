@@ -11,6 +11,21 @@ from clownfish.session.session import TerminalSession
 from clownfish.session.transport import Transport
 
 
+class CommandResult(str):
+    """Structured command execution result subclassing str for full backward compatibility."""
+
+    command: str
+    exit_code: int
+    output: str
+
+    def __new__(cls, output: str, command: str = "", exit_code: int = 0) -> Self:
+        instance = super().__new__(cls, output)
+        instance.command = command
+        instance.exit_code = exit_code
+        instance.output = output
+        return instance
+
+
 class HeadlessTerminal:
     """Programmatic headless terminal interface wrapping TerminalSession.
 
@@ -137,6 +152,8 @@ class HeadlessTerminal:
         baseline = since_marker if since_marker is not None else self._prompt_marker_index
         deadline = time.monotonic() + timeout
         initial_text = self.get_text()
+        initial_scrollback = len(self.session.screen.scrollback)
+        initial_cursor = self.cursor_position
 
         while time.monotonic() < deadline:
             self.drain()
@@ -148,9 +165,21 @@ class HeadlessTerminal:
             # If no OSC 133 markers exist, check text for common shell prompt terminators ($ or % or #)
             if current_markers == 0:
                 screen_text = self.get_text()
-                if re.search(r"[$%#>]\s*$", screen_text, re.MULTILINE) and (baseline == 0 or screen_text != initial_text):
-                    self._prompt_marker_index = 1
-                    return True
+                current_scrollback = len(self.session.screen.scrollback)
+                current_cursor = self.cursor_position
+                has_prompt = bool(re.search(r"[$%#>]\s*$", screen_text, re.MULTILINE))
+
+                if has_prompt:
+                    if self._prompt_marker_index == 0 and baseline == 0:
+                        self._prompt_marker_index = 1
+                        return True
+                    if (
+                        screen_text != initial_text
+                        or current_scrollback > initial_scrollback
+                        or current_cursor != initial_cursor
+                    ):
+                        self._prompt_marker_index += 1
+                        return True
             time.sleep(interval)
 
         self.drain()
@@ -160,12 +189,110 @@ class HeadlessTerminal:
             return True
         return False
 
-    def run_command(self, cmd: str, timeout: float = 10.0) -> str:
-        """Send command, wait for prompt to return, and return all text output."""
+    def run_command(
+        self,
+        cmd: str,
+        timeout: float = 10.0,
+        use_sentinel: bool = True,
+        check: bool = False,
+    ) -> CommandResult:
+        """Execute a shell command, wait for completion, and return only the command's output.
+
+        Args:
+            cmd: Shell command string to execute.
+            timeout: Maximum seconds to wait before raising TimeoutError.
+            use_sentinel: When True, uses a unique command completion token and captures
+                the exact process exit code ($?). When False, waits for standard shell prompt.
+            check: When True, raises subprocess.CalledProcessError if exit_code != 0.
+
+        Returns:
+            CommandResult (subclass of str) containing the captured command output,
+            with .exit_code and .command attributes.
+
+        Raises:
+            TimeoutError: If the command does not complete within `timeout` seconds.
+            subprocess.CalledProcessError: If `check=True` and exit_code is non-zero.
+        """
+        import subprocess
+        import uuid
+
+        if use_sentinel:
+            token = f"__CF_{uuid.uuid4().hex[:8]}__"
+            sentinel_re = re.compile(rf"{token}:(-?\d+)")
+            deadline = time.monotonic() + timeout
+
+            self.drain()
+            if self._prompt_marker_index == 0:
+                self.wait_for_prompt(timeout=min(2.0, timeout))
+
+            start_abs_line = self.session.screen.total_lines_scrolled + self.session.screen.cursor_y
+
+            if "\n" in cmd.strip():
+                formatted_cmd = f"(\n{cmd.strip()}\n); printf \"{token}:%d\\n\" $?\n"
+            else:
+                formatted_cmd = f"{cmd.rstrip()} ; printf \"{token}:%d\\n\" $?\n"
+
+            self.send_input(formatted_cmd)
+
+            exit_code = 0
+            matched_output = ""
+            while time.monotonic() < deadline:
+                self.drain()
+                all_lines = self.get_text(include_scrollback=True).split("\n")
+                base_abs_line = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)
+                start_idx = max(0, start_abs_line - base_abs_line)
+
+                sentinel_idx = None
+                for idx in range(start_idx, len(all_lines)):
+                    m = sentinel_re.search(all_lines[idx])
+                    if m and "printf" not in all_lines[idx] and ";" not in all_lines[idx]:
+                        sentinel_idx = idx
+                        exit_code = int(m.group(1))
+                        break
+
+                if sentinel_idx is not None:
+                    cmd_lines = all_lines[start_idx:sentinel_idx]
+                    # Locate the end of the input echo (the line containing the printf sentinel command)
+                    echo_end_idx = None
+                    for i in range(len(cmd_lines) - 1, -1, -1):
+                        if token in cmd_lines[i] and ("printf" in cmd_lines[i] or ";" in cmd_lines[i]):
+                            echo_end_idx = i
+                            break
+                    if echo_end_idx is not None:
+                        output_lines = cmd_lines[echo_end_idx + 1 :]
+                    elif cmd_lines and cmd.strip() in cmd_lines[0]:
+                        output_lines = cmd_lines[1:]
+                    else:
+                        output_lines = cmd_lines
+                    matched_output = "\n".join(output_lines).strip()
+                    break
+                time.sleep(0.02)
+            else:
+                raise TimeoutError(f"Command '{cmd}' timed out after {timeout} seconds")
+
+            self.wait_for_prompt(timeout=0.5)
+
+            if check and exit_code != 0:
+                raise subprocess.CalledProcessError(exit_code, cmd, output=matched_output)
+
+            return CommandResult(matched_output, command=cmd, exit_code=exit_code)
+
+        # Fallback non-sentinel execution
         baseline = len(self.session.screen.prompt_markers)
+        self.drain()
+        start_abs_line = self.session.screen.total_lines_scrolled + self.session.screen.cursor_y
         self.send_input(cmd.rstrip("\n") + "\n")
-        self.wait_for_prompt(timeout=timeout, since_marker=baseline)
-        return self.get_text(include_scrollback=True)
+        if not self.wait_for_prompt(timeout=timeout, since_marker=baseline):
+            raise TimeoutError(f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds")
+
+        all_lines = self.get_text(include_scrollback=True).split("\n")
+        base_abs_line = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)
+        start_idx = max(0, start_abs_line - base_abs_line)
+        output_lines = all_lines[start_idx:]
+        if output_lines and cmd.strip() in output_lines[0]:
+            output_lines = output_lines[1:]
+        out = "\n".join(output_lines).strip()
+        return CommandResult(out, command=cmd, exit_code=0)
 
     def is_alive(self) -> bool:
         """Return True if the underlying session transport process is active."""
