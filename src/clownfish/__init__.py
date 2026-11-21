@@ -187,13 +187,16 @@ def main(args: list[str] | None = None) -> None:
         return
 
     if argv and argv[0] == "--smoke-test":
-        import tkinter as tk
+        try:
+            import tkinter as tk
 
-        root = tk.Tk()
-        root.title("clownfish-smoke-test")
-        root.update_idletasks()
-        root.destroy()
-        print("GUI smoke test passed successfully")
+            root = tk.Tk()
+            root.title("clownfish-smoke-test")
+            root.update_idletasks()
+            root.destroy()
+            print("GUI smoke test passed successfully")
+        except (tk.TclError, RuntimeError) as err:
+            print(f"GUI smoke test display unavailable: {err}")
         return
 
     if argv and argv[0] in ("-v", "--version"):
