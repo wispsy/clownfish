@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import time
 
+import pytest
+
 from clownfish.transports.pty import PTYTransport
 
 
@@ -84,4 +86,40 @@ def test_pty_default_shell_command_args() -> None:
 
     # When command is None, interactive login shell is prepared
     assert transport.command is None
+
+
+def test_pty_write_backpressure_and_saturation() -> None:
+    """Verify PTYTransport applies backpressure and raises BufferError on saturation timeout."""
+    import threading
+
+    transport = PTYTransport(cols=80, rows=24)
+    transport._running = True
+    transport.master_fd = 999  # Mock valid descriptor
+
+    # Reduce queue limit for deterministic test
+    transport.MAX_WRITE_QUEUE_CHUNKS = 3
+
+    # Enqueue up to limit
+    transport.write(b"chunk-1")
+    transport.write(b"chunk-2")
+    transport.write(b"chunk-3")
+    assert len(transport._write_queue) == 3
+
+    # Writing when saturated should timeout and raise BufferError
+    with pytest.raises(BufferError, match="saturated"):
+        transport.write(b"chunk-overflow", timeout=0.05)
+
+    # Draining a chunk should notify condition and allow subsequent write
+    def pop_chunk_later() -> None:
+        time.sleep(0.05)
+        with transport._write_cv:
+            transport._write_queue.popleft()
+            transport._write_cv.notify()
+
+    t = threading.Thread(target=pop_chunk_later)
+    t.start()
+    transport.write(b"chunk-recovered", timeout=0.5)
+    t.join()
+    assert b"chunk-recovered" in transport._write_queue
+
 

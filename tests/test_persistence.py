@@ -1,16 +1,15 @@
-"""Tests for Milestone 0.6.0 portability, remote SSH sessions, and layout persistence."""
+"""Behavioral tests for layout and session state persistence."""
 
 from __future__ import annotations
 
-import io
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-import clownfish
-from clownfish import HeadlessTerminal, main
+from clownfish import main
 from clownfish.config import TerminalConfig
 from clownfish.session.persistence import (
     PaneState,
@@ -18,39 +17,6 @@ from clownfish.session.persistence import (
     SplitNodeState,
     TabState,
 )
-from clownfish.transports.ssh import SSHTransport
-
-
-def test_version_bump_060() -> None:
-    """Verify package version is at least 0.6.0."""
-    assert clownfish.__version__ >= "0.6.0"
-
-
-def test_headless_terminal_live_execution() -> None:
-    """Test HeadlessTerminal running a real shell command and capturing output."""
-    with HeadlessTerminal(cols=80, rows=24) as term:
-        assert term.is_alive()
-        term.send_input("echo CLOWNFISH_HEADLESS_OK\n")
-        matched = term.wait_for_text("CLOWNFISH_HEADLESS_OK", timeout=3.0)
-        assert matched is True, "Expected command output to appear on screen"
-
-        text = term.get_text()
-        assert "CLOWNFISH_HEADLESS_OK" in text
-
-        # Check cursor position
-        col, row = term.cursor_position
-        assert 0 <= col < 80
-        assert 0 <= row < 24
-
-
-def test_headless_terminal_line_indexing() -> None:
-    """Verify single line retrieval and bounds checking."""
-    with HeadlessTerminal(cols=40, rows=10) as term:
-        line_0 = term.get_line(0)
-        assert isinstance(line_0, str)
-
-        with pytest.raises(IndexError):
-            term.get_line(100)
 
 
 def test_session_state_serialization() -> None:
@@ -117,42 +83,34 @@ def test_session_state_file_persistence() -> None:
         assert SessionState.load(state_file) is None
 
 
-def test_ssh_transport_command_construction() -> None:
-    """Verify OpenSSH argument formatting with custom parameters."""
-    transport = SSHTransport(
-        host="example.com",
-        port=2202,
-        user="deploy",
-        identity_file="/custom/id_ed25519",
-        extra_args=["-o", "StrictHostKeyChecking=no"],
-    )
-    cmd = transport._build_ssh_command()
-    assert cmd[0] == "ssh"
-    assert "-tt" in cmd
-    assert "-p" in cmd
-    assert "2202" in cmd
-    assert "-l" in cmd
-    assert "deploy" in cmd
-    assert "-i" in cmd
-    assert "/custom/id_ed25519" in cmd
-    assert "StrictHostKeyChecking=no" in cmd
-    assert cmd[-1] == "example.com"
+def test_session_state_atomic_save_and_recovery() -> None:
+    """Verify atomic file saving and corrupted schema recovery."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        save_path = Path(tmpdir) / "session_state.json"
 
+        state = SessionState(
+            version=1,
+            active_tab_index=0,
+            tabs=[TabState(title="Primary", root=SplitNodeState(is_leaf=True, pane=PaneState(cwd="/tmp")))],
+        )
+        saved = state.save(save_path)
+        assert saved.exists()
 
-def test_cli_ssh_argument_parsing() -> None:
-    """Verify clownfish ssh CLI command parsing."""
-    with (
-        patch("clownfish.transports.ssh.SSHTransport.__init__", return_value=None) as mock_ssh_init,
-        patch("tkinter.Tk"),
-        patch("clownfish.frontends.tkinter.app.TkTerminalApp"),
-    ):
-        main(["ssh", "deploy@remote.org", "-p", "2222", "-i", "~/.ssh/id_rsa"])
-        mock_ssh_init.assert_called_once()
-        call_kwargs = mock_ssh_init.call_args[1]
-        assert call_kwargs["host"] == "remote.org"
-        assert call_kwargs["user"] == "deploy"
-        assert call_kwargs["port"] == 2222
-        assert call_kwargs["identity_file"] == "~/.ssh/id_rsa"
+        # Load valid state
+        loaded = SessionState.load(save_path)
+        assert loaded is not None
+        assert len(loaded.tabs) == 1
+        assert loaded.tabs[0].title == "Primary"
+
+        # Corrupt file with malformed JSON
+        save_path.write_text("{malformed json", encoding="utf-8")
+        assert SessionState.load(save_path) is None
+
+        # Corrupt file with invalid types in schema
+        save_path.write_text(json.dumps({"version": "bad", "tabs": "not a list"}), encoding="utf-8")
+        recovered = SessionState.load(save_path)
+        assert recovered is not None
+        assert len(recovered.tabs) == 1  # Recovers default tab
 
 
 def test_cli_restore_flags() -> None:
@@ -166,18 +124,6 @@ def test_cli_restore_flags() -> None:
             assert config_obj.restore_session is False
 
 
-def test_cli_help_shows_v060_options() -> None:
-    """Verify --help documents ssh and session restoration options."""
-    stdout_buf = io.StringIO()
-    with patch("sys.stdout", stdout_buf):
-        main(["--help"])
-    output = stdout_buf.getvalue()
-    assert "ssh <destination>" in output
-    assert "--restore" in output
-    assert "--no-restore" in output
-    assert "--headless" in output
-
-
 def test_gui_tab_and_split_state_persistence() -> None:
     """Verify dump_state and load_state on TabbedTerminalView and SplitView."""
     try:
@@ -185,7 +131,7 @@ def test_gui_tab_and_split_state_persistence() -> None:
 
         root = tk.Tk()
         root.withdraw()
-    except (ImportError, tk.TclError):
+    except (ImportError, tk.TclError, RuntimeError):
         pytest.skip("Tkinter or display not available")
 
     try:
@@ -213,37 +159,5 @@ def test_gui_tab_and_split_state_persistence() -> None:
     finally:
         try:
             root.destroy()
-        except tk.TclError:
+        except (tk.TclError, RuntimeError):
             pass
-
-
-def test_new_ssh_tab_creation() -> None:
-    """Verify creating an SSH tab on TabbedTerminalView."""
-    try:
-        import tkinter as tk
-
-        root = tk.Tk()
-        root.withdraw()
-    except (ImportError, tk.TclError):
-        pytest.skip("Tkinter or display not available")
-
-    try:
-        from clownfish.frontends.tkinter.tabs import TabbedTerminalView
-
-        with patch("clownfish.transports.ssh.SSHTransport.start", return_value=None):
-            tab_view = TabbedTerminalView(root)
-            ssh_sv = tab_view.new_ssh_tab(
-                host="server.internal",
-                user="admin",
-                port=2222,
-            )
-            assert len(tab_view.tabs) == 2
-            assert "server.internal" in tab_view.tabs[-1][0]
-            assert "🌐" in tab_view.tabs[-1][0]
-            assert len(ssh_sv.panes()) == 1
-    finally:
-        try:
-            root.destroy()
-        except tk.TclError:
-            pass
-

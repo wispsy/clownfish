@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 __all__ = [
     "Cell",
     "CommandResult",
@@ -121,12 +121,18 @@ def _run_command_headless(command: str, cols: int = 80, rows: int = 24) -> int:
     while transport.is_alive():
         time.sleep(0.02)
 
+    # Allow reader thread to finish reading all buffered EOF data
+    if hasattr(transport, "_reader_thread") and transport._reader_thread:
+        transport._reader_thread.join(timeout=1.0)
+
     exit_code = 0
     if transport._proc:
         try:
-            exit_code = transport._proc.wait(timeout=0.2) or 0
+            exit_code = transport._proc.wait(timeout=0.5) or 0
         except (subprocess.TimeoutExpired, OSError):
             exit_code = transport._proc.poll() or 0
+
+    transport.close()
     return exit_code
 
 
@@ -241,6 +247,12 @@ def _run_interactive_tty_bridge(
                 signal.signal(signal.SIGWINCH, old_sigwinch)
             except (ValueError, OSError):
                 pass
+        if hasattr(transport, "_reader_thread") and transport._reader_thread:
+            try:
+                transport._reader_thread.join(timeout=0.5)
+            except (RuntimeError, TimeoutError):
+                pass
+        transport.close()
 
     exit_code = 0
     if isinstance(transport, PTYTransport) and transport._proc:
