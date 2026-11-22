@@ -164,34 +164,33 @@ class HeadlessTerminal:
                 self._prompt_marker_index = current_markers
                 return True
 
-            # If no OSC 133 markers exist, check active cursor line for common shell prompt terminators
-            if current_markers == 0:
-                cx, cy = self.cursor_position
-                cursor_line = self.get_line(cy)
-                prefix_to_cursor = cursor_line[:cx].rstrip() if cx > 0 else cursor_line.rstrip()
-                has_prompt = bool(
-                    self.PROMPT_PATTERN.search(prefix_to_cursor)
-                    or self.PROMPT_PATTERN.search(cursor_line.strip())
-                )
-                current_abs_cursor = self.session.screen.total_lines_scrolled + cy
+            # If no new OSC 133 marker arrived, check active cursor line for common shell prompt terminators
+            cx, cy = self.cursor_position
+            cursor_line = self.get_line(cy)
+            prefix_to_cursor = cursor_line[:cx].rstrip() if cx > 0 else cursor_line.rstrip()
+            has_prompt = bool(
+                self.PROMPT_PATTERN.search(prefix_to_cursor)
+                or self.PROMPT_PATTERN.search(cursor_line.strip())
+            )
+            current_abs_cursor = self.session.screen.total_lines_scrolled + cy
 
-                if has_prompt:
-                    if self._prompt_marker_index == 0 and baseline == 0:
-                        self._prompt_marker_index = 1
-                        return True
-                    if (
-                        current_abs_cursor > initial_abs_cursor
-                        or (
-                            current_abs_cursor != initial_abs_cursor
-                            and self.get_text() != initial_text
-                        )
-                        or (
-                            self.get_text() != initial_text
-                            and (cx, cy) != initial_cursor
-                        )
-                    ):
-                        self._prompt_marker_index += 1
-                        return True
+            if has_prompt:
+                if self._prompt_marker_index == 0 and baseline == 0:
+                    self._prompt_marker_index = 1
+                    return True
+                if (
+                    current_abs_cursor > initial_abs_cursor
+                    or (
+                        current_abs_cursor != initial_abs_cursor
+                        and self.get_text() != initial_text
+                    )
+                    or (
+                        self.get_text() != initial_text
+                        and (cx, cy) != initial_cursor
+                    )
+                ):
+                    self._prompt_marker_index += 1
+                    return True
             time.sleep(interval)
 
         self.drain()
@@ -267,7 +266,7 @@ class HeadlessTerminal:
                     # Locate the end of the input echo (the line containing the printf sentinel command)
                     echo_end_idx = None
                     for i in range(len(cmd_lines) - 1, -1, -1):
-                        if token in cmd_lines[i] and ("printf" in cmd_lines[i] or ";" in cmd_lines[i]):
+                        if token in cmd_lines[i]:
                             echo_end_idx = i
                             break
                     if echo_end_idx is not None:
