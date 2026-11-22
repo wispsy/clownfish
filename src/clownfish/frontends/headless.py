@@ -313,9 +313,11 @@ class HeadlessTerminal:
         self.send_input(cmd.rstrip("\n") + "\n")
         if not self.wait_for_prompt(timeout=timeout, since_marker=baseline):
             cx, cy = self.cursor_position
+            lines_dump = [f"{r}: {self.get_line(r)!r}" for r in range(min(12, self.session.rows))]
             raise TimeoutError(
                 f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds. "
-                f"Cursor=({cx}, {cy}), line={self.get_line(cy)!r}, markers={len(self.session.screen.prompt_markers)}"
+                f"Cursor=({cx}, {cy}), markers={len(self.session.screen.prompt_markers)}\n"
+                + "\n".join(lines_dump)
             )
 
         all_lines = self.get_text(include_scrollback=True).split("\n")
