@@ -172,11 +172,11 @@ class HeadlessTerminal:
                 self.PROMPT_PATTERN.search(prefix_to_cursor)
                 or self.PROMPT_PATTERN.search(cursor_line.strip())
             )
-            # If active cursor line is blank because prompt filled the row and wrapped to col 0, check prev row
+            # If cursor is at col 0 of a blank line (multi-line or newline-terminated prompt), check prev row
             if not has_prompt and not cursor_line.strip() and cx == 0 and cy > 0:
                 prev_line = self.get_line(cy - 1)
-                if len(prev_line) >= self.cols - 4 and self.PROMPT_PATTERN.search(prev_line.strip()):
-                    has_prompt = True
+                # Strict check on prev_line requiring standard primary prompt terminators ($ % # ❯ etc.)
+                has_prompt = bool(re.search(r"[$%#❯➜→λ»]\s*$", prev_line.strip()))
 
             current_abs_cursor = self.session.screen.total_lines_scrolled + cy
 
