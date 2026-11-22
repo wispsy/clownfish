@@ -3,8 +3,8 @@ class Clownfish < Formula
 
   desc "Lightweight, zero-dependency modern terminal emulator"
   homepage "https://github.com/wispsy/clownfish"
-  url "https://files.pythonhosted.org/packages/source/c/clownfish/clownfish-0.5.0.tar.gz"
-  sha256 "eddb7e0b8a22f23ebe91d38e13c6d1ca1641641d3cecf9e114d1eacc1481bb17"
+  url "https://files.pythonhosted.org/packages/source/c/clownfish/clownfish-0.6.3.tar.gz"
+  sha256 "6300cfb7c9c1c1e78540bd00caef005ef2328b58a4cea29723556f4aa37999de"
   license "MIT"
 
   depends_on "python@3.14"
@@ -15,7 +15,7 @@ class Clownfish < Formula
   end
 
   test do
-    assert_match "clownfish 0.5.0", shell_output("#{bin}/clownfish --version")
+    assert_match "clownfish 0.6.3", shell_output("#{bin}/clownfish --version")
     system libexec/"bin/python", "-c", "import tkinter; import clownfish"
   end
 end

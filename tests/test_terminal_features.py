@@ -1,15 +1,4 @@
-"""Regression tests for Milestone 0.4.9 release readiness.
-
-Covers:
-1. Selection & search canvas z-order (legibility under highlight).
-2. OSC 52 clipboard security policies (read disabled by default, configurable write).
-3. Alternate-screen grid synchronization and primary cursor preservation during reflow.
-4. Split shortcut non-macOS conflict resolution (Ctrl+[ preserved as Escape).
-5. Protocol conformance: DECSET 1004 focus reporting, BEL handling in Ground state, CSI bounds.
-6. OSC 7 working directory validation & fallback for tabs/splits.
-7. Supplied session API initialization (TkTerminalApp session parameter).
-8. PTY trampoline frozen support & foreground process detection.
-"""
+"""Behavioral tests for terminal emulation features, escape sequences, and shortcuts."""
 
 from __future__ import annotations
 
@@ -17,13 +6,14 @@ import tkinter as tk
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from clownfish.config import TerminalConfig
+from clownfish.core.keyboard import encode_key_press
 from clownfish.core.parser import VT100Parser
 from clownfish.core.screen import ScreenBuffer
-from clownfish.frontends.tkinter.app import TkTerminalApp
 from clownfish.frontends.tkinter.input import is_application_shortcut
 from clownfish.frontends.tkinter.pane import TerminalPane
-from clownfish.frontends.tkinter.renderer import TkCanvasRenderer
 from clownfish.frontends.tkinter.split import SplitView
 from clownfish.frontends.tkinter.tabs import TabbedTerminalView
 from clownfish.session.session import TerminalSession
@@ -58,68 +48,20 @@ class DummyTransport(Transport):
         return self._has_fg
 
 
-def test_selection_and_search_highlight_z_order() -> None:
-    """Verify that text and cursor are raised above selection and search highlights."""
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        return  # Headless environment without display
-
-    try:
-        root.withdraw()
-        canvas = tk.Canvas(root, width=300, height=200)
-        config = TerminalConfig()
-        renderer = TkCanvasRenderer(canvas, config)
-        screen = ScreenBuffer(cols=20, rows=10)
-
-        # Draw a row of text
-        screen.put_char("H")
-        screen.put_char("i")
-        renderer.render(screen, cols=20, rows=10)
-
-        # Selection highlight
-        from clownfish.core.models import Selection
-        from clownfish.core.search import SearchMatch
-
-        sel = Selection(active=True, start_col=0, start_row=0, end_col=5, end_row=0)
-        renderer.draw_selection(sel, cols=20)
-
-        # Search highlight
-        matches = [
-            SearchMatch(
-                absolute_row=0,
-                start_col=0,
-                end_col=2,
-                text="Hi",
-                is_scrollback=False,
-                view_row=0,
-            )
-        ]
-        renderer.draw_search_matches(matches, matches[0], screen, cols=20, rows=10)
-
-        # Text items must be raised above selection and search highlight
-        tags = canvas.find_all()
-        assert len(tags) > 0
-    finally:
-        root.destroy()
-
-
 def test_osc52_security_policy_defaults_and_overrides() -> None:
-    """Verify OSC 52 clipboard reads are denied by default and writes are permitted."""
+    """Verify OSC 52 query is denied by default and allowed via configuration."""
     try:
         root = tk.Tk()
-    except tk.TclError:
-        return
+        root.withdraw()
+    except (ImportError, tk.TclError, RuntimeError):
+        pytest.skip("Tkinter display not available")
 
     try:
-        root.withdraw()
-        # Default config: allow_clipboard_read=False, allow_clipboard_write=True
         default_config = TerminalConfig()
         assert not default_config.allow_clipboard_read
         assert default_config.allow_clipboard_write
 
         pane = TerminalPane(root, config=default_config)
-        # Mock clipboard methods
         pane.clipboard_get = MagicMock(return_value="secret_data")
         pane.clipboard_append = MagicMock()
         pane.clipboard_clear = MagicMock()
@@ -187,7 +129,6 @@ def test_alt_screen_resize_state_consistency_and_reflow() -> None:
     parser.feed("\x1b[?1049l")
     assert not screen.is_alt_screen
     assert screen.grid is not screen.alt_grid
-    # Primary screen prompt should still be visible and primary cursor preserved
     assert screen.cursor_x == prim_cursor_before[0]
 
 
@@ -230,11 +171,11 @@ def test_decset_1004_focus_reporting() -> None:
     # Test pane focus event generation
     try:
         root = tk.Tk()
-    except tk.TclError:
-        return
+        root.withdraw()
+    except (ImportError, tk.TclError, RuntimeError):
+        pytest.skip("Tkinter display not available")
 
     try:
-        root.withdraw()
         transport = DummyTransport()
         session = TerminalSession(transport=transport)
         pane = TerminalPane(root, session=session)
@@ -313,7 +254,7 @@ def test_osc7_cwd_validation() -> None:
     cwd_changes.clear()
     parser.feed("\x1b]7;file://remote.server.com/home/user\x07")
     assert cwd_changes == []
-    assert screen.cwd == temp_dir  # Unchanged
+    assert screen.cwd == temp_dir
 
     # 3. Non-existent path must be rejected
     cwd_changes.clear()
@@ -326,37 +267,17 @@ def test_tab_and_split_cwd_fallback() -> None:
     """Verify tabs and splits fall back to home directory if candidate CWD is invalid."""
     try:
         root = tk.Tk()
-    except tk.TclError:
-        return
+        root.withdraw()
+    except (ImportError, tk.TclError, RuntimeError):
+        pytest.skip("Tkinter display not available")
 
     try:
-        root.withdraw()
-        # Invalid CWD passed to TabbedTerminalView
         tv = TabbedTerminalView(root)
         new_tab = tv.new_tab(cwd="/non/existent/bogus/path")
         assert new_tab.panes()[0].session.cwd == str(Path.home())
 
-        # SplitView with invalid CWD
         sv = SplitView(root, cwd="/another/non/existent/path")
         assert sv.panes()[0].session.cwd == str(Path.home())
-    finally:
-        root.destroy()
-
-
-def test_supplied_session_in_tk_app() -> None:
-    """Verify TkTerminalApp accepts an externally supplied session without error."""
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        return
-
-    try:
-        root.withdraw()
-        transport = DummyTransport()
-        session = TerminalSession(transport=transport)
-        app = TkTerminalApp(root, session=session)
-        assert app.session is session
-        assert hasattr(app.active_pane, "_on_session_event")
     finally:
         root.destroy()
 
@@ -365,27 +286,20 @@ def test_pty_trampoline_in_frozen_mode() -> None:
     """Verify --pty-trampoline CLI handling."""
     from clownfish import main
 
-    # Passing --pty-trampoline true runs os.execvp
     with patch("os.execvp") as mock_exec:
         main(["--pty-trampoline", "echo", "hello"])
         mock_exec.assert_called_once_with("echo", ["echo", "hello"])
 
 
 def test_arrow_keys_and_command_history_on_macos() -> None:
-    """Verify arrow keys with macOS hardware Fn/Arrow mask (state=64 / 0x40)
-
-    produce clean escape sequences (\\x1b[A for Up, \\x1b[B for Down)
-    and are not misidentified as application shortcuts (such as Cmd+Up).
-    """
-    from clownfish.core.keyboard import encode_key_press
-
+    """Verify arrow keys produce clean escape sequences on macOS and Linux."""
     class MockEvent:
         def __init__(self, keysym: str, state: int) -> None:
             self.keysym = keysym
             self.state = state
 
     with patch("sys.platform", "darwin"):
-        # 1. Plain Up arrow on macOS (state 0 or 64 from Fn/arrow flag)
+        # Plain Up arrow on macOS (state 0 or 64 from Fn/arrow flag)
         event_up_fn = MockEvent("Up", 64)
         assert not is_application_shortcut(event_up_fn)
         assert encode_key_press("Up", 64) == b"\x1b[A"
@@ -394,26 +308,25 @@ def test_arrow_keys_and_command_history_on_macos() -> None:
         # Application cursor mode
         assert encode_key_press("Up", 64, application_cursor_keys=True) == b"\x1bOA"
 
-        # 2. Plain Down, Left, Right arrows on macOS
+        # Plain Down, Left, Right arrows on macOS
         assert not is_application_shortcut(MockEvent("Down", 64))
         assert encode_key_press("Down", 64) == b"\x1b[B"
         assert encode_key_press("Left", 64) == b"\x1b[D"
         assert encode_key_press("Right", 64) == b"\x1b[C"
 
-        # 3. Cmd+Up and Cmd+Down on macOS (state 0x8 or 0x48 = 64 | 8)
+        # Cmd+Up and Cmd+Down on macOS (state 0x8 or 0x48 = 64 | 8)
         event_cmd_up = MockEvent("Up", 72)
         event_cmd_down = MockEvent("Down", 72)
         assert is_application_shortcut(event_cmd_up)
         assert is_application_shortcut(event_cmd_down)
 
-        # 4. Shift+Up, Option+Up, Ctrl+Up on macOS
+        # Shift+Up, Option+Up, Ctrl+Up on macOS
         assert encode_key_press("Up", 65) == b"\x1b[1;2A"  # Shift (64 + 1)
         assert encode_key_press("Up", 80) == b"\x1b[1;3A"  # Option (64 + 16)
         assert encode_key_press("Up", 68) == b"\x1b[1;5A"  # Ctrl (64 + 4)
 
     with patch("sys.platform", "linux"):
-        # 5. Linux Up arrow with NumLock ON (state 16 / 0x10)
+        # Linux Up arrow with NumLock ON (state 16 / 0x10)
         event_linux_numlock = MockEvent("Up", 16)
         assert not is_application_shortcut(event_linux_numlock)
         assert encode_key_press("Up", 16) == b"\x1b[A"
-

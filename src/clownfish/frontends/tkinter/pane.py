@@ -306,6 +306,8 @@ class TerminalPane(tk.Frame):
 
     def _render_tick(self) -> None:
         self._tick_job = None
+        if getattr(self, "_closed", False):
+            return
         has_pending = self.session.drain_events()
         is_viewable = bool(self.winfo_viewable())
 
@@ -339,16 +341,15 @@ class TerminalPane(tk.Frame):
 
     def _on_session_event(self) -> None:
         """Wake UI thread when background PTY events arrive without accumulating duplicate loops."""
-        try:
-            if self._tick_job is not None:
-                try:
-                    self.after_cancel(self._tick_job)
-                except (tk.TclError, OSError, RuntimeError):
-                    pass
-                self._tick_job = None
-            self._tick_job = self.after_idle(self._render_tick)
-        except (tk.TclError, OSError, RuntimeError):
-            pass
+        if getattr(self, "_closed", False):
+            return
+        # If a render tick is already scheduled, it will drain and render in <= 16ms (or 1ms).
+        # We avoid cancelling/rescheduling from the background thread to prevent cross-thread timer races.
+        if self._tick_job is None:
+            try:
+                self._tick_job = self.after_idle(self._render_tick)
+            except (tk.TclError, OSError, RuntimeError):
+                pass
 
     def _on_clipboard_write(self, selection: str, text: str) -> None:
         """Handle OSC 52 clipboard write."""
@@ -389,12 +390,14 @@ class TerminalPane(tk.Frame):
 
     def close(self) -> None:
         """Close this pane and clean up session and callbacks."""
+        self._closed = True
         self.session.set_event_notifier(None)
         if self._tick_job:
             try:
                 self.after_cancel(self._tick_job)
             except (tk.TclError, OSError, RuntimeError):
                 pass
+            self._tick_job = None
         self.session.close()
         try:
             self.destroy()

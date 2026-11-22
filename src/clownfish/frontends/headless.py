@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from types import TracebackType
-from typing import Self
+from typing import ClassVar, Self
 
 from clownfish.session.session import TerminalSession
 from clownfish.session.transport import Transport
@@ -32,6 +32,8 @@ class HeadlessTerminal:
     Provides a clean, dependency-free API to run shell or SSH sessions, send keystrokes,
     and inspect terminal screen content without any graphical window (Tkinter).
     """
+
+    PROMPT_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[$%#>❯➜→λ»]\s*$")
 
     def __init__(
         self,
@@ -152,8 +154,8 @@ class HeadlessTerminal:
         baseline = since_marker if since_marker is not None else self._prompt_marker_index
         deadline = time.monotonic() + timeout
         initial_text = self.get_text()
-        initial_scrollback = len(self.session.screen.scrollback)
         initial_cursor = self.cursor_position
+        initial_abs_cursor = self.session.screen.total_lines_scrolled + self.session.screen.cursor_y
 
         while time.monotonic() < deadline:
             self.drain()
@@ -162,21 +164,31 @@ class HeadlessTerminal:
                 self._prompt_marker_index = current_markers
                 return True
 
-            # If no OSC 133 markers exist, check text for common shell prompt terminators ($ or % or #)
+            # If no OSC 133 markers exist, check active cursor line for common shell prompt terminators
             if current_markers == 0:
-                screen_text = self.get_text()
-                current_scrollback = len(self.session.screen.scrollback)
-                current_cursor = self.cursor_position
-                has_prompt = bool(re.search(r"[$%#>]\s*$", screen_text, re.MULTILINE))
+                cx, cy = self.cursor_position
+                cursor_line = self.get_line(cy)
+                prefix_to_cursor = cursor_line[:cx].rstrip() if cx > 0 else cursor_line.rstrip()
+                has_prompt = bool(
+                    self.PROMPT_PATTERN.search(prefix_to_cursor)
+                    or self.PROMPT_PATTERN.search(cursor_line.strip())
+                )
+                current_abs_cursor = self.session.screen.total_lines_scrolled + cy
 
                 if has_prompt:
                     if self._prompt_marker_index == 0 and baseline == 0:
                         self._prompt_marker_index = 1
                         return True
                     if (
-                        screen_text != initial_text
-                        or current_scrollback > initial_scrollback
-                        or current_cursor != initial_cursor
+                        current_abs_cursor > initial_abs_cursor
+                        or (
+                            current_abs_cursor != initial_abs_cursor
+                            and self.get_text() != initial_text
+                        )
+                        or (
+                            self.get_text() != initial_text
+                            and (cx, cy) != initial_cursor
+                        )
                     ):
                         self._prompt_marker_index += 1
                         return True
@@ -278,9 +290,17 @@ class HeadlessTerminal:
             return CommandResult(matched_output, command=cmd, exit_code=exit_code)
 
         # Fallback non-sentinel execution
-        baseline = len(self.session.screen.prompt_markers)
         self.drain()
+        if self._prompt_marker_index == 0:
+            self.wait_for_prompt(timeout=min(2.0, timeout))
+
+        all_before = self.get_text(include_scrollback=True).split("\n")
+        base_before = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)
         start_abs_line = self.session.screen.total_lines_scrolled + self.session.screen.cursor_y
+        cur_idx_before = max(0, start_abs_line - base_before)
+        header_before = all_before[:cur_idx_before]
+
+        baseline = len(self.session.screen.prompt_markers)
         self.send_input(cmd.rstrip("\n") + "\n")
         if not self.wait_for_prompt(timeout=timeout, since_marker=baseline):
             raise TimeoutError(f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds")
@@ -288,9 +308,19 @@ class HeadlessTerminal:
         all_lines = self.get_text(include_scrollback=True).split("\n")
         base_abs_line = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)
         start_idx = max(0, start_abs_line - base_abs_line)
-        output_lines = all_lines[start_idx:]
+        prompt_idx = max(
+            0,
+            (self.session.screen.total_lines_scrolled + self.session.screen.cursor_y) - base_abs_line,
+        )
+        output_lines = all_lines[start_idx:prompt_idx] if prompt_idx >= start_idx else all_lines[start_idx:]
         if output_lines and cmd.strip() in output_lines[0]:
             output_lines = output_lines[1:]
+        # Strip matching prompt header lines from bottom of output_lines
+        while output_lines and (
+            output_lines[-1].strip() == ""
+            or any(output_lines[-1].strip() == h.strip() for h in header_before if h.strip())
+        ):
+            output_lines.pop()
         out = "\n".join(output_lines).strip()
         return CommandResult(out, command=cmd, exit_code=0)
 
