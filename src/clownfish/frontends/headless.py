@@ -188,6 +188,10 @@ class HeadlessTerminal:
                         self.get_text() != initial_text
                         and (cx, cy) != initial_cursor
                     )
+                    or (
+                        self.get_text() != initial_text
+                        and self._prompt_marker_index <= baseline
+                    )
                 ):
                     self._prompt_marker_index += 1
                     return True
@@ -266,7 +270,13 @@ class HeadlessTerminal:
                     # Locate the end of the input echo (the line containing the printf sentinel command)
                     echo_end_idx = None
                     for i in range(len(cmd_lines) - 1, -1, -1):
-                        if token in cmd_lines[i]:
+                        line_text = cmd_lines[i]
+                        if (
+                            token in line_text
+                            or "__CF_" in line_text
+                            or (":%d" in line_text and "$" in line_text)
+                            or ("printf" in line_text and "$" in line_text)
+                        ):
                             echo_end_idx = i
                             break
                     if echo_end_idx is not None:
@@ -291,7 +301,7 @@ class HeadlessTerminal:
         # Fallback non-sentinel execution
         self.drain()
         if self._prompt_marker_index == 0:
-            self.wait_for_prompt(timeout=min(2.0, timeout))
+            self.wait_for_prompt(timeout=timeout)
 
         all_before = self.get_text(include_scrollback=True).split("\n")
         base_before = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)
@@ -302,7 +312,11 @@ class HeadlessTerminal:
         baseline = len(self.session.screen.prompt_markers)
         self.send_input(cmd.rstrip("\n") + "\n")
         if not self.wait_for_prompt(timeout=timeout, since_marker=baseline):
-            raise TimeoutError(f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds")
+            cx, cy = self.cursor_position
+            raise TimeoutError(
+                f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds. "
+                f"Cursor=({cx}, {cy}), line={self.get_line(cy)!r}, markers={len(self.session.screen.prompt_markers)}"
+            )
 
         all_lines = self.get_text(include_scrollback=True).split("\n")
         base_abs_line = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)

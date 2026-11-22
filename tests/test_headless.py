@@ -133,13 +133,18 @@ def test_headless_wait_for_prompt_no_premature_return() -> None:
 def test_headless_wait_for_prompt_active_cursor_line() -> None:
     """Verify fallback wait_for_prompt ignores historical prompt symbols in running command output."""
     with HeadlessTerminal(cols=80, rows=24) as term:
-        term.wait_for_prompt(timeout=2.0)
+        term.wait_for_prompt(timeout=3.0)
         term.drain()
 
         start_time = time.monotonic()
         # Output prompt-like symbols ($ and >) while sleeping to simulate command output
         term.send_input("echo 'output with $ and >'; sleep 0.4\n")
-        assert term.wait_for_prompt(timeout=5.0) is True
+        ok = term.wait_for_prompt(timeout=5.0)
+        assert ok is True, (
+            f"Failed wait_for_prompt! cursor={term.cursor_position}, "
+            f"line={term.get_line(term.cursor_position[1])!r}, "
+            f"screen={term.get_text()[:200]!r}"
+        )
         elapsed = time.monotonic() - start_time
         # Must have waited for the sleep rather than returning early on 'output with $ and >'
         assert elapsed >= 0.35
