@@ -172,6 +172,12 @@ class HeadlessTerminal:
                 self.PROMPT_PATTERN.search(prefix_to_cursor)
                 or self.PROMPT_PATTERN.search(cursor_line.strip())
             )
+            # If active cursor line is blank because prompt filled the row and wrapped to col 0, check prev row
+            if not has_prompt and not cursor_line.strip() and cx == 0 and cy > 0:
+                prev_line = self.get_line(cy - 1)
+                if len(prev_line) >= self.cols - 4 and self.PROMPT_PATTERN.search(prev_line.strip()):
+                    has_prompt = True
+
             current_abs_cursor = self.session.screen.total_lines_scrolled + cy
 
             if has_prompt:
@@ -312,13 +318,7 @@ class HeadlessTerminal:
         baseline = len(self.session.screen.prompt_markers)
         self.send_input(cmd.rstrip("\n") + "\n")
         if not self.wait_for_prompt(timeout=timeout, since_marker=baseline):
-            cx, cy = self.cursor_position
-            lines_dump = [f"{r}: {self.get_line(r)!r}" for r in range(min(12, self.session.rows))]
-            raise TimeoutError(
-                f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds. "
-                f"Cursor=({cx}, {cy}), markers={len(self.session.screen.prompt_markers)}\n"
-                + "\n".join(lines_dump)
-            )
+            raise TimeoutError(f"Command '{cmd}' timed out waiting for prompt after {timeout} seconds")
 
         all_lines = self.get_text(include_scrollback=True).split("\n")
         base_abs_line = self.session.screen.total_lines_scrolled - len(self.session.screen.scrollback)
@@ -334,6 +334,7 @@ class HeadlessTerminal:
         while output_lines and (
             output_lines[-1].strip() == ""
             or any(output_lines[-1].strip() == h.strip() for h in header_before if h.strip())
+            or bool(self.PROMPT_PATTERN.search(output_lines[-1].strip()))
         ):
             output_lines.pop()
         out = "\n".join(output_lines).strip()

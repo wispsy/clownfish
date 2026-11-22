@@ -139,11 +139,7 @@ def test_headless_wait_for_prompt_active_cursor_line() -> None:
         start_time = time.monotonic()
         # Output prompt-like symbols ($ and >) while sleeping to simulate command output
         term.send_input("echo 'output with $ and >'; sleep 0.4\n")
-        ok = term.wait_for_prompt(timeout=5.0)
-        lines_dump = [f"{r}: {term.get_line(r)!r}" for r in range(min(12, term.session.rows))]
-        assert ok is True, (
-            f"Failed wait_for_prompt! cursor={term.cursor_position}\n" + "\n".join(lines_dump)
-        )
+        assert term.wait_for_prompt(timeout=5.0) is True
         elapsed = time.monotonic() - start_time
         # Must have waited for the sleep rather than returning early on 'output with $ and >'
         assert elapsed >= 0.35
