@@ -4,7 +4,7 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "clownfish"
-version = "0.6.3"
+version = "0.6.4"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -18,7 +18,7 @@ syntax = [
 
 [package.metadata]
 requires-dist = [
-    { name = "escape-colors", marker = "extra == 'syntax'", specifier = "==0.2.0" },
+    { name = "escape-colors", marker = "extra == 'syntax'", specifier = "==0.3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
 ]
@@ -35,11 +35,11 @@ wheels = [
 
 [[package]]
 name = "escape-colors"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/85/e3/f1b9572364f48eac307e2953820cd7bb5f26e219b74d815c07c176dcaa50/escape_colors-0.2.0.tar.gz", hash = "sha256:5f1eaff484bf0878311defc88ac4900e5207fea0e168d120d1d62ce325a01de8", size = 14912, upload-time = "2026-11-11T16:47:28.126Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/c9/b6554549d6c00d8086b371dd540e358437e0b89a75f7f8400342c3eef82a/escape_colors-0.3.0.tar.gz", hash = "sha256:6ed3e7fc6adf924455dfc9ef745e657a95aca04a38ae1d385089887f8dabc256", size = 21322, upload-time = "2026-11-17T02:27:23.82Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/95/d72c01543fe57c87bd96639eaec55417f9569ee03f1ca73a90e3bb4d941f/escape_colors-0.2.0-py3-none-any.whl", hash = "sha256:6ec76e5712cdf692f78ba48708255ba7305bd03634bb639fb56ebdc9d071da38", size = 19922, upload-time = "2026-11-11T16:47:27Z" },
+    { url = "https://files.pythonhosted.org/packages/34/4c/9d6c93da2b93d89ba06b7074685f904ba90c09a1e58d725af9c0042a1105/escape_colors-0.3.0-py3-none-any.whl", hash = "sha256:949ce4287e6d5932d8e290cadae53bb249dd5ab60826b6ae1be64704255cde53", size = 26648, upload-time = "2026-11-17T02:27:22.584Z" },
 ]
 
 [[package]]

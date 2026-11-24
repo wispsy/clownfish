@@ -1,8 +1,10 @@
 [project]
 name = "clownfish"
-version = "0.6.3"
+version = "0.6.4"
 description = "A modern terminal emulator written in Python and Tkinter"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "ellainng", email = "299958882+ellainng@users.noreply.github.com" }
 ]
@@ -11,7 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 syntax = [
-    "escape-colors==0.2.0",
+    "escape-colors==0.3.0",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -32,3 +34,6 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+
+[tool.uv.build-backend]
+source-exclude = ["**/.DS_Store"]
