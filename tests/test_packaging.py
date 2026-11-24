@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -20,7 +21,6 @@ def test_package_version_consistency() -> None:
     with open(pyproject_path, "rb") as f:
         pyproject = tomllib.load(f)
     assert clownfish.__version__ == pyproject["project"]["version"]
-    assert clownfish.__version__ == "0.6.3"
 
 
 def test_cli_version_argument() -> None:
@@ -89,7 +89,7 @@ def test_pypi_trusted_publishing_workflow() -> None:
     # Verify OIDC token permission
     assert "id-token: write" in workflow_content
     # Verify official pypi publish action
-    assert "pypa/gh-action-pypi-publish@release/v1" in workflow_content
+    assert re.search(r"pypa/gh-action-pypi-publish@[0-9a-f]{40}", workflow_content)
     # Verify macOS bundle build step is included
     assert "build_macos_app.py" in workflow_content
     assert "Clownfish-*-macos.zip" in workflow_content
