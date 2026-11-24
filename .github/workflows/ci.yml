@@ -35,5 +35,8 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check .
 
-      - name: Test with pytest
-        run: uv run pytest
+      - name: Test exact installed wheel and sdist
+        run: |
+          python -c "import tkinter"
+          uv build --out-dir dist
+          uv run --frozen python scripts/qualify.py dist
