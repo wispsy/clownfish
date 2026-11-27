@@ -3,7 +3,16 @@
 from collections import deque
 from typing import ClassVar
 
-from clownfish.core.models import DEFAULT_BG, DEFAULT_FG, Cell, PromptMarker, Row, Style, char_width
+from clownfish.core.models import (
+    DEFAULT_BG,
+    DEFAULT_FG,
+    Cell,
+    GraphicPlacement,
+    PromptMarker,
+    Row,
+    Style,
+    char_width,
+)
 
 
 class ScreenBuffer:
@@ -51,6 +60,8 @@ class ScreenBuffer:
 
         self.grid = self.primary_grid
         self.prompt_markers: list[PromptMarker] = []
+        self.graphic_placements: list[GraphicPlacement] = []
+        self.alt_graphic_placements: list[GraphicPlacement] = []
         self.title: str = ""
         self.icon_name: str = ""
         self.cwd: str = ""
@@ -61,6 +72,34 @@ class ScreenBuffer:
             [Cell(style=self.current_style.copy(), url=self.current_url) for _ in range(c)],
             is_wrapped=is_wrapped,
         )
+
+    @property
+    def active_graphic_placements(self) -> list[GraphicPlacement]:
+        """Return the graphic placements corresponding to the active screen buffer."""
+        return self.alt_graphic_placements if self.is_alt_screen else self.graphic_placements
+
+    def add_graphic_placement(self, placement: GraphicPlacement) -> None:
+        """Register a new graphic placement in the active screen buffer."""
+        target_list = self.alt_graphic_placements if self.is_alt_screen else self.graphic_placements
+        target_list.append(placement)
+        for r in range(placement.row, min(self.rows, placement.row + placement.rows)):
+            self.dirty_lines.add(r)
+
+    def delete_graphic_placements(
+        self,
+        target: str = "all",
+        image_id: int | None = None,
+        placement_id: int | None = None,
+    ) -> None:
+        """Delete graphic placements matching criteria."""
+        target_list = self.alt_graphic_placements if self.is_alt_screen else self.graphic_placements
+        if target == "all":
+            target_list.clear()
+        elif target == "image" and image_id is not None:
+            target_list[:] = [p for p in target_list if p.image_id != image_id]
+        elif target == "placement" and placement_id is not None:
+            target_list[:] = [p for p in target_list if p.placement_id != placement_id]
+        self.mark_all_dirty()
 
     def mark_all_dirty(self):
         self.dirty_lines.update(range(self.rows))
@@ -109,6 +148,13 @@ class ScreenBuffer:
         if len(self.prompt_markers) > 500:
             min_retained = self.total_lines_scrolled - (self.scrollback.maxlen or 10_000)
             self.prompt_markers = [m for m in self.prompt_markers if m.row >= min_retained]
+
+        # Prune graphic placements older than scrollback history retention
+        if not self.is_alt_screen and self.graphic_placements:
+            min_retained = self.total_lines_scrolled - (self.scrollback.maxlen or 10_000)
+            self.graphic_placements = [
+                p for p in self.graphic_placements if (p.abs_row + p.rows) >= min_retained
+            ]
 
         self.mark_all_dirty()
 
@@ -160,6 +206,8 @@ class ScreenBuffer:
         self.scrollback.clear()
         self.scroll_offset = 0
         self.prompt_markers.clear()
+        self.graphic_placements.clear()
+        self.alt_graphic_placements.clear()
         self.total_lines_scrolled = 0
         self.wrap_pending = False
         self.grid = [self._blank_row() for _ in range(self.rows)]
@@ -347,22 +395,30 @@ class ScreenBuffer:
 
     def erase_in_display(self, mode: int = 0):
         self.wrap_pending = False
+        target_list = self.alt_graphic_placements if self.is_alt_screen else self.graphic_placements
         if mode == 0:
             self.erase_in_line(0)
             for y in range(self.cursor_y + 1, self.rows):
                 self.grid[y] = self._blank_row()
                 self.dirty_lines.add(y)
+            cursor_abs = self.total_lines_scrolled + self.cursor_y
+            target_list[:] = [p for p in target_list if p.abs_row < cursor_abs]
         elif mode == 1:
             for y in range(self.cursor_y):
                 self.grid[y] = self._blank_row()
                 self.dirty_lines.add(y)
             self.erase_in_line(1)
+            cursor_abs = self.total_lines_scrolled + self.cursor_y
+            target_list[:] = [p for p in target_list if p.abs_row >= cursor_abs]
         elif mode == 2:
             self.grid = [self._blank_row() for _ in range(self.rows)]
             if self.is_alt_screen:
                 self.alt_grid = self.grid
+                self.alt_graphic_placements.clear()
             else:
                 self.primary_grid = self.grid
+                current_top = self.total_lines_scrolled
+                self.graphic_placements[:] = [p for p in self.graphic_placements if p.abs_row < current_top]
             self.mark_all_dirty()
         elif mode == 3:
             # CSI 3 J: Erase Saved Lines (xterm extension)

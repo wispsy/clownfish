@@ -10,6 +10,9 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
+- **Kitty Graphics Protocol**: High-performance inline graphics streaming via standard APC escape sequences (`\x1b_G...;payload\x1b\`). Supports direct PNG format decoding (`f=100`), raw RGB (`f=24`) and RGBA (`f=32`) via pure standard-library Netpbm PPM conversion, chunked transmissions (`m=1`), placement queries (`a=q`), deletion by ID or position (`a=d`), and scrollback anchor tracking.
+- **Programming Font Ligatures**: Multi-character programming ligature shaping (`!=`, `==`, `===`, `->`, `=>`, `<=`, `>=`, `:=`, `/*`, `::`, `...`, etc.) shaped into atomic runs for modern developer fonts (Fira Code, JetBrains Mono, Cascadia Code, etc.) with strict monospace grid alignment and user-configurable `enable_ligatures` toggle.
+- **High-Performance Hardware-Layered Canvas**: Scanline background run batching, canvas item recycling, borderless canvas configuration (`highlightthickness=0`), and native OS hardware acceleration (Metal / CALayer on macOS) to eliminate draw-call overhead and maintain smooth 60 FPS under heavy terminal output.
 - **Remote SSH Sessions & Integrated Client**: Direct CLI connection via `clownfish ssh [user@]host [-p port] [-i key]`, UI Quick Connect dialog (`Cmd+Shift+O` / `Ctrl+Shift+O`), visual remote tab indicators (`🌐 user@host`), and clean connection teardown.
 - **Session Layout Persistence & Restoration**: Automatically serializes open tabs, nested split hierarchies (horizontal and vertical), and working directories across restarts into `~/.config/clownfish/session_state.json` (`--restore` / `--no-restore`).
 - **Headless Terminal Interface**: Pure Python programmatic interface (`HeadlessTerminal`) with zero display-server/Tkinter requirements, ideal for CI, AI agent automation, and scripted testing (`get_text()`, `wait_for_text()`, `send_input()`).
@@ -48,10 +51,10 @@ Clownfish offers multiple installation channels: native macOS application bundle
 
 Download the latest release archive from [GitHub Releases](https://github.com/wispsy/clownfish/releases):
 
-1. Download `Clownfish-v0.6.3-macos.zip`.
+1. Download `Clownfish-v0.7.0-macos.zip`.
 2. Unzip the archive:
    ```bash
-   unzip Clownfish-v0.6.3-macos.zip
+   unzip Clownfish-v0.7.0-macos.zip
    ```
 3. Move `Clownfish.app` to `/Applications`:
    ```bash
@@ -171,9 +174,10 @@ clownfish/
 │       ├── config.py              # Configuration dataclasses (TerminalConfig)
 │       ├── syntax.py              # Syntax highlighting integration
 │       ├── core/                  # Core terminal engine
-│       │   ├── models.py          # Data models (Cell, Style, Selection, PromptMarker)
+│       │   ├── models.py          # Data models (Cell, Style, Selection, GraphicPlacement)
 │       │   ├── keyboard.py        # Keystroke encoding & Kitty keyboard protocol
-│       │   ├── parser.py          # VT100 / ANSI / OSC escape sequence parser
+│       │   ├── ligatures.py       # Programming ligature shaping engine & cell segmenter
+│       │   ├── parser.py          # VT100 / ANSI / OSC / Kitty Graphics escape sequence parser
 │       │   ├── screen.py          # Screen buffer, dual grid, autowrap & scrollback
 │       │   └── search.py          # In-buffer regex & plain text search engine
 │       ├── session/               # Terminal session layer
@@ -201,10 +205,12 @@ clownfish/
 
 - [x] Split-pane multiplexing and tabbed sessions.
 - [x] In-buffer regex / plain text search with highlight overlay.
-- [ ] GPU-accelerated texture atlas rendering via Metal/Vulkan.
-- [ ] HarfBuzz typography shaping for developer font ligatures (`->`, `!=`, `===`).
-- [ ] Kitty Graphics Protocol inline image streaming.
-- [ ] Sixel bitmap rasterization protocol support.
+- [x] High-performance hardware-layered canvas pipeline with scanline run batching.
+- [x] Programming font ligature shaping for developer fonts (`->`, `!=`, `===`).
+- [x] Kitty Graphics Protocol inline image streaming (PNG, raw RGB/RGBA).
+- [ ] User experience & Configuration UI / Settings menu (search, custom themes, native menus).
+- [ ] Accessibility & screen reader integration via accessible text interface.
+- [ ] Multi-frontend expansion: HTML browser interface and native macOS / UIKit / SwiftUI.
 
 ---
 

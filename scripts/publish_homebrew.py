@@ -23,7 +23,7 @@ def get_version() -> str:
         for line in f:
             if line.startswith("__version__"):
                 return line.split("=")[1].strip().strip('"').strip("'")
-    return "0.6.3"
+    return "0.7.0"
 
 
 def calculate_sha256(path: Path) -> str:

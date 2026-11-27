@@ -6,6 +6,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 from clownfish.config import TerminalConfig
+from clownfish.core.ligatures import segment_row_cells
 from clownfish.core.models import DEFAULT_BG, Selection
 from clownfish.core.screen import ScreenBuffer
 from clownfish.core.search import SearchMatch
@@ -17,6 +18,10 @@ class TkCanvasRenderer:
     def __init__(self, canvas: tk.Canvas, config: TerminalConfig | None = None) -> None:
         self.canvas = canvas
         self.config = config or TerminalConfig()
+        try:
+            self.canvas.configure(highlightthickness=0, borderwidth=0)
+        except (tk.TclError, AttributeError):
+            pass
 
         font_family = self.config.font_family
         font_size = self.config.font_size
@@ -29,13 +34,14 @@ class TkCanvasRenderer:
         self.cell_w = self.fonts[(False, False)].measure("M")
         self.cell_h = self.fonts[(False, False)].metrics("linespace")
         self._last_cursor_state: tuple[int, int, bool, int, int] | None = None
+        self._photo_images: dict[int, tk.PhotoImage] = {}
 
     @staticmethod
     def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
         return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
     def render(self, screen: ScreenBuffer, cols: int, rows: int) -> None:
-        """Render dirty rows and update the cursor position."""
+        """Render dirty rows and update the cursor position and inline graphics."""
         if getattr(screen, "synchronized_output", False):
             return
 
@@ -45,6 +51,9 @@ class TkCanvasRenderer:
                 if 0 <= r < rows:
                     self._render_row(screen, r, cols)
             screen.dirty_lines.clear()
+
+        # Render inline Kitty graphics placements
+        self._render_graphics(screen, cols, rows)
 
         cursor_state = (
             screen.cursor_x,
@@ -93,6 +102,15 @@ class TkCanvasRenderer:
                     stipple="gray50",
                     tags="cursor",
                 )
+
+        # Enforce correct display layering
+        self.canvas.tag_lower("bg_item")
+        self.canvas.tag_raise("graphic_item")
+        self.canvas.tag_raise("text_item")
+        self.canvas.tag_raise("line_item")
+        self.canvas.tag_raise("selection_box")
+        self.canvas.tag_raise("search_highlight")
+        self.canvas.tag_raise("cursor")
 
     def draw_selection(self, selection: Selection, cols: int) -> None:
         """Draw selection rectangles over selected character cells."""
@@ -168,56 +186,117 @@ class TkCanvasRenderer:
         self.canvas.delete(tag)
         y = r * self.cell_h
         row_cells = screen.get_visible_row(r)
+        enable_lig = getattr(self.config, "enable_ligatures", True)
+        segments = segment_row_cells(row_cells, cols, enable_ligatures=enable_lig)
 
-        col = 0
-        while col < cols:
-            cell = row_cells[col]
-            if cell.width == 0:
-                col += 1
-                continue
+        # Batch contiguous same-color background spans
+        current_bg = None
+        bg_start_col = 0
+        bg_end_col = 0
 
-            st = cell.style
-            url = cell.url
-            fg = st.bg if st.reverse else st.fg
+        for seg in segments:
+            st = seg.style
             bg = st.fg if st.reverse else st.bg
+            if bg != current_bg:
+                if current_bg is not None and current_bg != DEFAULT_BG:
+                    self.canvas.create_rectangle(
+                        bg_start_col * self.cell_w,
+                        y,
+                        bg_end_col * self.cell_w,
+                        y + self.cell_h,
+                        fill=self.rgb_to_hex(current_bg),
+                        outline="",
+                        tags=(tag, "bg_item"),
+                    )
+                current_bg = bg
+                bg_start_col = seg.start_col
+            bg_end_col = seg.end_col
 
-            if cell.width == 2:
-                span_width = 2
-                text_str = cell.char
-                next_col = min(cols, col + 2)
-            else:
-                span_chars = [cell.char]
-                next_col = col + 1
-                while next_col < cols:
-                    nc = row_cells[next_col]
-                    if nc.width == 1 and nc.style == st and nc.url == url:
-                        span_chars.append(nc.char)
-                        next_col += 1
-                    else:
-                        break
-                span_width = next_col - col
-                text_str = "".join(span_chars)
+        if current_bg is not None and current_bg != DEFAULT_BG:
+            self.canvas.create_rectangle(
+                bg_start_col * self.cell_w,
+                y,
+                bg_end_col * self.cell_w,
+                y + self.cell_h,
+                fill=self.rgb_to_hex(current_bg),
+                outline="",
+                tags=(tag, "bg_item"),
+            )
 
-            x1 = col * self.cell_w
-            x2 = (col + span_width) * self.cell_w
+        # Draw text chunks and underline / hyperlink indicators
+        for seg in segments:
+            st = seg.style
+            fg = st.bg if st.reverse else st.fg
+            x1 = seg.start_col * self.cell_w
+            x2 = seg.end_col * self.cell_w
 
-            if bg != DEFAULT_BG:
-                self.canvas.create_rectangle(
-                    x1, y, x2, y + self.cell_h,
-                    fill=self.rgb_to_hex(bg), outline="", tags=(tag, "bg_item")
-                )
-
-            if text_str.strip():
+            if seg.text.strip():
                 font = self.fonts[(st.bold, st.italic)]
+                text_tags = (tag, "text_item", "ligature_item") if seg.is_ligature else (tag, "text_item")
                 self.canvas.create_text(
-                    x1, y, text=text_str, anchor="nw",
-                    fill=self.rgb_to_hex(fg), font=font, tags=(tag, "text_item")
+                    x1,
+                    y,
+                    text=seg.text,
+                    anchor="nw",
+                    fill=self.rgb_to_hex(fg),
+                    font=font,
+                    tags=text_tags,
                 )
 
-            if st.underline or url:
+            if st.underline or seg.url:
                 uy = y + self.cell_h - 2
                 self.canvas.create_line(
                     x1, uy, x2, uy, fill=self.rgb_to_hex(fg), tags=(tag, "line_item")
                 )
 
-            col = next_col
+    def _render_graphics(self, screen: ScreenBuffer, cols: int, rows: int) -> None:
+        """Render active inline Kitty graphics placements on the canvas."""
+        placements = getattr(screen, "active_graphic_placements", [])
+        active_tags: set[str] = set()
+
+        if placements:
+            top_visible_absolute = screen.total_lines_scrolled - screen.scroll_offset
+
+            for p in placements:
+                visible_row = p.abs_row - top_visible_absolute
+                # Check if placement intersects the vertical viewport
+                if -p.rows < visible_row < rows:
+                    tag = f"graphic_{p.image_id}_{p.placement_id}"
+                    active_tags.add(tag)
+
+                    if p.image_id not in self._photo_images and p.base64_data:
+                        try:
+                            photo = tk.PhotoImage(data=p.base64_data, format=p.format)
+                            self._photo_images[p.image_id] = photo
+                        except (tk.TclError, RuntimeError, ValueError):
+                            pass
+
+                    photo = self._photo_images.get(p.image_id)
+                    if photo:
+                        gx = p.col * self.cell_w
+                        gy = visible_row * self.cell_h
+                        existing = self.canvas.find_withtag(tag)
+                        if existing:
+                            self.canvas.coords(tag, gx, gy)
+                        else:
+                            self.canvas.create_image(
+                                gx, gy, image=photo, anchor="nw", tags=(tag, "graphic_item")
+                            )
+
+        # Cleanup scrolled-off or deleted graphic items from canvas
+        for item in self.canvas.find_withtag("graphic_item"):
+            item_tags = self.canvas.gettags(item)
+            matched = any(t in active_tags for t in item_tags)
+            if not matched:
+                self.canvas.delete(item)
+
+        # Prune cached PhotoImages no longer in active screen placements
+        if placements:
+            active_ids = {p.image_id for p in placements}
+            for cached_id in list(self._photo_images.keys()):
+                if cached_id not in active_ids:
+                    del self._photo_images[cached_id]
+        elif self._photo_images:
+            self._photo_images.clear()
+            self.canvas.delete("graphic_item")
+

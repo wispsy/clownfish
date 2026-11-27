@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.6.5"
+__version__ = "0.7.0"
 __all__ = [
     "Cell",
     "CommandResult",
@@ -285,6 +285,7 @@ def main(args: list[str] | None = None) -> None:
             import tkinter as tk
 
             root = tk.Tk()
+            root.withdraw()
             root.title("clownfish-smoke-test")
             root.update_idletasks()
             root.destroy()

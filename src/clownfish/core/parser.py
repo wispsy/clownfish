@@ -4,10 +4,11 @@ import base64
 import binascii
 import os
 import socket
+import struct
 import urllib.parse
 from collections.abc import Callable
 
-from clownfish.core.models import DEFAULT_BG, DEFAULT_FG
+from clownfish.core.models import DEFAULT_BG, DEFAULT_FG, GraphicPlacement
 from clownfish.core.screen import ScreenBuffer
 
 
@@ -22,6 +23,7 @@ class VT100Parser:
 
     MAX_OSC_LENGTH: int = 8192
     MAX_STRING_LENGTH: int = 8192
+    MAX_GRAPHIC_STRING_LENGTH: int = 10_485_760  # 10 MB for Kitty Graphics payloads
     MAX_PARAM_DIGITS: int = 32
     MAX_PARAMS: int = 64
     MAX_SUBPARAMS: int = 16
@@ -55,7 +57,9 @@ class VT100Parser:
         self.intermediate_bytes = ""
         self.osc_payload = ""
         self.string_payload = ""
+        self.string_type = ""
         self.escape_in_string = False
+        self._kitty_chunk_buffers: dict[int, list[str]] = {}
 
         # Terminal Flags
         self.application_cursor_keys = False
@@ -121,6 +125,7 @@ class VT100Parser:
             self.escape_in_string = False
         elif char in ("P", "_", "^", "X"):
             self.state = self.STATE_STRING
+            self.string_type = char
             self.string_payload = ""
             self.escape_in_string = False
         elif char == "7":
@@ -144,22 +149,209 @@ class VT100Parser:
             self.state = self.STATE_GROUND
 
     def _handle_string(self, char: str):
+        limit = self.MAX_GRAPHIC_STRING_LENGTH if self.string_type == "_" else self.MAX_STRING_LENGTH
         if char in ("\x07", "\x9c"):
             self.state = self.STATE_GROUND
             self.escape_in_string = False
+            self._dispatch_string()
         elif self.escape_in_string:
             self.escape_in_string = False
             if char == "\\":
                 self.state = self.STATE_GROUND
+                self._dispatch_string()
             elif char == "\x1b":
                 self.escape_in_string = True
-            elif len(self.string_payload) < self.MAX_STRING_LENGTH:
+            elif len(self.string_payload) < limit:
                 self.string_payload += "\x1b" + char
         elif char == "\x1b":
             self.escape_in_string = True
         else:
-            if len(self.string_payload) < self.MAX_STRING_LENGTH:
+            if len(self.string_payload) < limit:
                 self.string_payload += char
+
+    def _dispatch_string(self):
+        """Dispatch terminated DCS / APC / PM / SOS strings."""
+        if self.string_type == "_" and self.string_payload.startswith("G"):
+            self._handle_kitty_graphics(self.string_payload[1:])
+        self.string_payload = ""
+        self.string_type = ""
+
+    def _handle_kitty_graphics(self, payload: str) -> None:
+        """Decode and execute Kitty Graphics Protocol commands (APC G ... ST)."""
+        if ";" in payload:
+            control_str, data_b64 = payload.split(";", 1)
+        else:
+            control_str, data_b64 = payload, ""
+
+        params: dict[str, str] = {}
+        if control_str:
+            for item in control_str.split(","):
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    params[k.strip()] = v.strip()
+
+        action = params.get("a", "t")
+        quiet = int(params.get("q", "0")) if params.get("q", "").isdigit() else 0
+        img_id = int(params.get("i", "0")) if params.get("i", "").isdigit() else 0
+        placement_id = int(params.get("p", "0")) if params.get("p", "").isdigit() else 0
+
+        # Query action: response with OK
+        if action == "q":
+            if self.write_response and quiet != 2:
+                resp = f"\x1b_Gi={img_id};OK\x1b\\".encode("ascii")
+                self.write_response(resp)
+            return
+
+        # Delete action
+        if action == "d":
+            delete_target = params.get("d", "a")
+            if delete_target == "a":
+                self.screen.delete_graphic_placements("all")
+            elif delete_target in ("i", "I"):
+                self.screen.delete_graphic_placements("image", image_id=img_id)
+            elif delete_target == "p":
+                self.screen.delete_graphic_placements("placement", placement_id=placement_id)
+            if self.write_response and quiet == 0:
+                self.write_response(b"\x1b_G;OK\x1b\\")
+            return
+
+        # Transmit actions ('t', 'T', 'a', 'p')
+        more_chunks = params.get("m", "0") == "1"
+        buf_key = img_id
+        if data_b64:
+            clean_chunk = "".join(data_b64.split())
+            self._kitty_chunk_buffers.setdefault(buf_key, []).append(clean_chunk)
+
+        if more_chunks:
+            return
+
+        chunks = self._kitty_chunk_buffers.pop(buf_key, [])
+        full_b64 = "".join(chunks)
+        if not full_b64 and data_b64:
+            full_b64 = "".join(data_b64.split())
+
+        transmission_medium = params.get("t", "d")
+        raw_bytes: bytes = b""
+
+        if transmission_medium in ("f", "t") and full_b64:
+            try:
+                path_bytes = base64.b64decode(full_b64)
+                file_path = path_bytes.decode("utf-8", errors="replace").strip()
+                if os.path.isfile(file_path):
+                    with open(file_path, "rb") as f:
+                        raw_bytes = f.read()
+                    if transmission_medium == "t":
+                        try:
+                            os.remove(file_path)
+                        except OSError:
+                            pass
+            except (OSError, UnicodeDecodeError, binascii.Error, ValueError):
+                raw_bytes = b""
+        elif full_b64:
+            try:
+                raw_bytes = base64.b64decode(full_b64)
+            except (binascii.Error, ValueError):
+                raw_bytes = b""
+
+        if not raw_bytes:
+            if self.write_response and quiet == 0:
+                self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
+            return
+
+        fmt_code = int(params.get("f", "100")) if params.get("f", "").isdigit() else 100
+        pixel_w = int(params.get("s", "0")) if params.get("s", "").isdigit() else 0
+        pixel_h = int(params.get("v", "0")) if params.get("v", "").isdigit() else 0
+        img_format = "png"
+        clean_b64 = ""
+
+        if fmt_code == 100 or raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            img_format = "png"
+            if len(raw_bytes) >= 24 and raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                try:
+                    pw, ph = struct.unpack(">II", raw_bytes[16:24])
+                    if pixel_w == 0:
+                        pixel_w = pw
+                    if pixel_h == 0:
+                        pixel_h = ph
+                except struct.error:
+                    pass
+            clean_b64 = base64.b64encode(raw_bytes).decode("ascii")
+        elif fmt_code in (24, 32) and pixel_w > 0 and pixel_h > 0:
+            img_format = "ppm"
+            if fmt_code == 24:
+                ppm_header = f"P6\n{pixel_w} {pixel_h}\n255\n".encode("ascii")
+                ppm_data = ppm_header + raw_bytes
+                clean_b64 = base64.b64encode(ppm_data).decode("ascii")
+            else:
+                rgb_buf = bytearray()
+                br, bg, bb = DEFAULT_BG
+                for idx in range(0, min(len(raw_bytes), pixel_w * pixel_h * 4), 4):
+                    r, g, b, a = raw_bytes[idx : idx + 4]
+                    if a == 255:
+                        rgb_buf.extend((r, g, b))
+                    else:
+                        alpha = a / 255.0
+                        rgb_buf.append(int(r * alpha + br * (1.0 - alpha)))
+                        rgb_buf.append(int(g * alpha + bg * (1.0 - alpha)))
+                        rgb_buf.append(int(b * alpha + bb * (1.0 - alpha)))
+                ppm_header = f"P6\n{pixel_w} {pixel_h}\n255\n".encode("ascii")
+                ppm_data = ppm_header + bytes(rgb_buf)
+                clean_b64 = base64.b64encode(ppm_data).decode("ascii")
+        else:
+            clean_b64 = base64.b64encode(raw_bytes).decode("ascii")
+
+        c_param = int(params.get("c", "0")) if params.get("c", "").isdigit() else 0
+        r_param = int(params.get("r", "0")) if params.get("r", "").isdigit() else 0
+
+        cell_w_est = 9
+        cell_h_est = 18
+
+        if c_param > 0:
+            cols = c_param
+        elif pixel_w > 0:
+            cols = max(1, (pixel_w + cell_w_est - 1) // cell_w_est)
+        else:
+            cols = 10
+
+        if r_param > 0:
+            rows = r_param
+        elif pixel_h > 0:
+            rows = max(1, (pixel_h + cell_h_est - 1) // cell_h_est)
+        else:
+            rows = 5
+
+        cols = min(self.screen.cols, cols)
+        cursor_advance = (action == "t" and params.get("C", "0") != "1")
+
+        placement = GraphicPlacement(
+            image_id=img_id,
+            placement_id=placement_id,
+            data=raw_bytes,
+            format=img_format,
+            col=self.screen.cursor_x,
+            row=self.screen.cursor_y,
+            abs_row=self.screen.total_lines_scrolled + self.screen.cursor_y,
+            cols=cols,
+            rows=rows,
+            pixel_width=pixel_w,
+            pixel_height=pixel_h,
+            cursor_advance=cursor_advance,
+            base64_data=clean_b64,
+        )
+
+        self.screen.add_graphic_placement(placement)
+
+        if cursor_advance:
+            for _ in range(rows):
+                self.screen.cursor_y += 1
+                if self.screen.cursor_y > self.screen.scroll_bottom:
+                    self.screen.scroll_up(1)
+                    self.screen.cursor_y = self.screen.scroll_bottom
+            self.screen.cursor_x = 0
+            self.screen.wrap_pending = False
+
+        if self.write_response and quiet == 0:
+            self.write_response(f"\x1b_Gi={img_id};OK\x1b\\".encode("ascii"))
 
     def _handle_csi(self, char: str):
         if not self.params and not self.current_subparams and not self.current_param and char in ("?", ">", "=", "<"):

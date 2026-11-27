@@ -118,7 +118,7 @@ def test_homebrew_formula_dependencies_and_virtualenv_target() -> None:
         sys.path.insert(0, str(REPO_ROOT))
     from scripts.publish_homebrew import render_formula
 
-    formula_str = render_formula("0.6.3", "dummy_sha256")
+    formula_str = render_formula("0.7.0", "dummy_sha256")
     assert 'depends_on "python@3.14"' in formula_str
     assert 'depends_on "python-tk@3.14"' in formula_str
     assert 'libexec/"bin/python"' in formula_str
