@@ -27,7 +27,7 @@ def main():
                 cwd=outside,
                 check=True,
             )
-            probe = "import clownfish; from pathlib import Path; import sys; from importlib.metadata import version; assert Path(clownfish.__file__).is_relative_to(Path(sys.prefix)); assert version('clownfish') == clownfish.__version__ == '0.6.5'; assert version('escape-colors') == '0.3.0'"
+            probe = "import clownfish; from pathlib import Path; import sys; from importlib.metadata import version; assert Path(clownfish.__file__).is_relative_to(Path(sys.prefix)); assert version('clownfish') == clownfish.__version__ == '0.7.0'; assert version('escape-colors') == '0.3.0'"
             subprocess.run([str(python), "-I", "-c", probe], cwd=outside, check=True)
             configuration = outside / "pytest.ini"
             configuration.write_text("[pytest]\n")

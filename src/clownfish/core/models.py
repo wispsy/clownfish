@@ -120,3 +120,37 @@ class Selection:
         if (p1[1], p1[0]) <= (p2[1], p2[0]):
             return p1, p2
         return p2, p1
+
+
+@dataclasses.dataclass(slots=True)
+class GraphicImage:
+    """Stored graphic data in memory (Kitty graphics protocol)."""
+
+    image_id: int
+    format: str  # "png", "ppm"
+    data: bytes  # binary bytes
+    base64_data: str  # base64 for Tk PhotoImage
+    pixel_width: int
+    pixel_height: int
+    version: int = 1
+
+
+@dataclasses.dataclass(slots=True)
+class GraphicPlacement:
+    """An inline image placement anchored on the terminal screen grid (Kitty graphics protocol)."""
+
+    image_id: int
+    placement_id: int = 0
+    col: int = 0
+    row: int = 0
+    abs_row: int = 0
+    cols: int = 1
+    rows: int = 1
+    data: bytes = b""
+    format: str = "png"  # "png", "ppm"
+    pixel_width: int = 0
+    pixel_height: int = 0
+    cursor_advance: bool = True
+    base64_data: str = ""
+    version: int = 1
+
