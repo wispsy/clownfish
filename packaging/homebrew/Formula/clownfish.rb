@@ -4,7 +4,7 @@ class Clownfish < Formula
   desc "Lightweight, zero-dependency modern terminal emulator"
   homepage "https://github.com/wispsy/clownfish"
   url "https://files.pythonhosted.org/packages/source/c/clownfish/clownfish-0.7.0.tar.gz"
-  sha256 "5c605aca0182afb772877bd1851177ddb5ee4e627ffdbc9b92561833eaf235d9"
+  sha256 "a5a59f1bde70f7260c3b8827c229b619da4298d10561cee2e0470cfe7dc11371"
   license "MIT"
 
   depends_on "python@3.14"
