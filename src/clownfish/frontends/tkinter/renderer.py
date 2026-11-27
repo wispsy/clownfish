@@ -34,7 +34,7 @@ class TkCanvasRenderer:
         self.cell_w = self.fonts[(False, False)].measure("M")
         self.cell_h = self.fonts[(False, False)].metrics("linespace")
         self._last_cursor_state: tuple[int, int, bool, int, int] | None = None
-        self._photo_images: dict[int, tk.PhotoImage] = {}
+        self._photo_images: dict[tuple[int, int, int, int], tk.PhotoImage] = {}
 
     @staticmethod
     def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
@@ -249,6 +249,38 @@ class TkCanvasRenderer:
                     x1, uy, x2, uy, fill=self.rgb_to_hex(fg), tags=(tag, "line_item")
                 )
 
+    @staticmethod
+    def _scale_photo(photo: tk.PhotoImage, target_w: int, target_h: int) -> tk.PhotoImage:
+        """Scale a Tk PhotoImage to target dimensions while maintaining aspect ratio or exact fit."""
+        cur_w = photo.width()
+        cur_h = photo.height()
+        if cur_w == target_w and cur_h == target_h:
+            return photo
+        if target_w <= 0 or target_h <= 0 or cur_w <= 0 or cur_h <= 0:
+            return photo
+
+        import math
+        gcd_x = math.gcd(cur_w, target_w)
+        gcd_y = math.gcd(cur_h, target_h)
+        zx = target_w // gcd_x
+        sx = cur_w // gcd_x
+        zy = target_h // gcd_y
+        sy = cur_h // gcd_y
+
+        if cur_w * zx <= 2048 and cur_h * zy <= 2048:
+            res = photo
+            if zx > 1 or zy > 1:
+                res = res.zoom(zx, zy)
+            if sx > 1 or sy > 1:
+                res = res.subsample(sx, sy)
+            return res
+
+        if cur_w >= target_w and cur_h >= target_h:
+            return photo.subsample(max(1, round(cur_w / target_w)), max(1, round(cur_h / target_h)))
+        elif cur_w <= target_w and cur_h <= target_h:
+            return photo.zoom(max(1, round(target_w / cur_w)), max(1, round(target_h / cur_h)))
+        return photo
+
     def _render_graphics(self, screen: ScreenBuffer, cols: int, rows: int) -> None:
         """Render active inline Kitty graphics placements on the canvas."""
         placements = getattr(screen, "active_graphic_placements", [])
@@ -264,14 +296,25 @@ class TkCanvasRenderer:
                     tag = f"graphic_{p.image_id}_{p.placement_id}"
                     active_tags.add(tag)
 
-                    if p.image_id not in self._photo_images and p.base64_data:
+                    target_w = p.cols * self.cell_w
+                    target_h = p.rows * self.cell_h
+                    orig_w = p.pixel_width if p.pixel_width > 0 else target_w
+                    orig_h = p.pixel_height if p.pixel_height > 0 else target_h
+                    scale = min(target_w / orig_w, target_h / orig_h)
+                    fit_w = max(1, round(orig_w * scale))
+                    fit_h = max(1, round(orig_h * scale))
+
+                    cache_key = (p.image_id, p.version, fit_w, fit_h)
+
+                    if cache_key not in self._photo_images and p.base64_data:
                         try:
-                            photo = tk.PhotoImage(data=p.base64_data, format=p.format)
-                            self._photo_images[p.image_id] = photo
+                            raw_photo = tk.PhotoImage(data=p.base64_data, format=p.format)
+                            scaled_photo = self._scale_photo(raw_photo, fit_w, fit_h)
+                            self._photo_images[cache_key] = scaled_photo
                         except (tk.TclError, RuntimeError, ValueError):
                             pass
 
-                    photo = self._photo_images.get(p.image_id)
+                    photo = self._photo_images.get(cache_key)
                     if photo:
                         gx = p.col * self.cell_w
                         gy = visible_row * self.cell_h
@@ -293,9 +336,9 @@ class TkCanvasRenderer:
         # Prune cached PhotoImages no longer in active screen placements
         if placements:
             active_ids = {p.image_id for p in placements}
-            for cached_id in list(self._photo_images.keys()):
-                if cached_id not in active_ids:
-                    del self._photo_images[cached_id]
+            for cached_key in list(self._photo_images.keys()):
+                if cached_key[0] not in active_ids:
+                    del self._photo_images[cached_key]
         elif self._photo_images:
             self._photo_images.clear()
             self.canvas.delete("graphic_item")

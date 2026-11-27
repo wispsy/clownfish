@@ -10,9 +10,9 @@ A lightweight, modern terminal emulator written in Python and Tkinter, featuring
 
 ## Features
 
-- **Kitty Graphics Protocol**: High-performance inline graphics streaming via standard APC escape sequences (`\x1b_G...;payload\x1b\`). Supports direct PNG format decoding (`f=100`), raw RGB (`f=24`) and RGBA (`f=32`) via pure standard-library Netpbm PPM conversion, chunked transmissions (`m=1`), placement queries (`a=q`), deletion by ID or position (`a=d`), and scrollback anchor tracking.
-- **Programming Font Ligatures**: Multi-character programming ligature shaping (`!=`, `==`, `===`, `->`, `=>`, `<=`, `>=`, `:=`, `/*`, `::`, `...`, etc.) shaped into atomic runs for modern developer fonts (Fira Code, JetBrains Mono, Cascadia Code, etc.) with strict monospace grid alignment and user-configurable `enable_ligatures` toggle.
-- **High-Performance Hardware-Layered Canvas**: Scanline background run batching, canvas item recycling, borderless canvas configuration (`highlightthickness=0`), and native OS hardware acceleration (Metal / CALayer on macOS) to eliminate draw-call overhead and maintain smooth 60 FPS under heavy terminal output.
+- **Kitty Graphics Protocol**: Native inline graphics streaming via standard APC escape sequences (`\x1b_G...;payload\x1b\`). Supports direct Base64 inline streaming (`t=d`), separate transmission (`a=t`), display (`a=T`), and placement (`a=p`) actions, spec-compliant multi-chunk payload reassembly (`m=1`/`m=0`), direct PNG format decoding (`f=100`), raw RGB (`f=24`) and RGBA (`f=32`) Netpbm PPM conversion, aspect-ratio-preserving cell scaling (`c`/`r`), placement queries (`a=q`), deletion by ID or position (`a=d`), memory budget enforcement, and reflow-aware scrollback anchor tracking. Strict security isolation rejects file-path transmission (`t=f`, `t=t`) to protect local filesystem integrity.
+- **Ligature-Aware Monospace Text Segmentation**: Multi-character programming operator detection (`!=`, `==`, `===`, `->`, `=>`, `<=`, `>=`, `:=`, `/*`, `::`, `...`, etc.) grouped into contiguous style runs for developer fonts (Fira Code, JetBrains Mono, Cascadia Code, etc.) while guaranteeing strict monospace grid alignment and cursor hit-testing. Toggleable via `enable_ligatures` in user configuration (defaults to `false`).
+- **Scanline Background Run Batching & Canvas Layering**: Merges contiguous identical background cells along each row into unified background rectangles, cutting canvas item allocations during full-screen rendering, with borderless canvas configuration and layered z-index display management.
 - **Remote SSH Sessions & Integrated Client**: Direct CLI connection via `clownfish ssh [user@]host [-p port] [-i key]`, UI Quick Connect dialog (`Cmd+Shift+O` / `Ctrl+Shift+O`), visual remote tab indicators (`🌐 user@host`), and clean connection teardown.
 - **Session Layout Persistence & Restoration**: Automatically serializes open tabs, nested split hierarchies (horizontal and vertical), and working directories across restarts into `~/.config/clownfish/session_state.json` (`--restore` / `--no-restore`).
 - **Headless Terminal Interface**: Pure Python programmatic interface (`HeadlessTerminal`) with zero display-server/Tkinter requirements, ideal for CI, AI agent automation, and scripted testing (`get_text()`, `wait_for_text()`, `send_input()`).
@@ -205,9 +205,10 @@ clownfish/
 
 - [x] Split-pane multiplexing and tabbed sessions.
 - [x] In-buffer regex / plain text search with highlight overlay.
-- [x] High-performance hardware-layered canvas pipeline with scanline run batching.
-- [x] Programming font ligature shaping for developer fonts (`->`, `!=`, `===`).
-- [x] Kitty Graphics Protocol inline image streaming (PNG, raw RGB/RGBA).
+- [x] Scanline background run batching and canvas layering.
+- [x] Ligature-aware monospace text segmentation (`->`, `!=`, `===`).
+- [x] Kitty Graphics Protocol inline image streaming (PNG, raw RGB/RGBA, direct inline base64).
+- [ ] Native Metal GPU rendering backend for macOS & GPU glyph texture atlas.
 - [ ] User experience & Configuration UI / Settings menu (search, custom themes, native menus).
 - [ ] Accessibility & screen reader integration via accessible text interface.
 - [ ] Multi-frontend expansion: HTML browser interface and native macOS / UIKit / SwiftUI.

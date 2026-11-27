@@ -8,7 +8,7 @@ import struct
 import urllib.parse
 from collections.abc import Callable
 
-from clownfish.core.models import DEFAULT_BG, DEFAULT_FG, GraphicPlacement
+from clownfish.core.models import DEFAULT_BG, DEFAULT_FG, GraphicImage, GraphicPlacement
 from clownfish.core.screen import ScreenBuffer
 
 
@@ -24,6 +24,9 @@ class VT100Parser:
     MAX_OSC_LENGTH: int = 8192
     MAX_STRING_LENGTH: int = 8192
     MAX_GRAPHIC_STRING_LENGTH: int = 10_485_760  # 10 MB for Kitty Graphics payloads
+    MAX_IMAGE_BYTES: int = 10 * 1024 * 1024  # 10 MB max decoded image size
+    MAX_IMAGE_WIDTH: int = 4096
+    MAX_IMAGE_HEIGHT: int = 4096
     MAX_PARAM_DIGITS: int = 32
     MAX_PARAMS: int = 64
     MAX_SUBPARAMS: int = 16
@@ -59,7 +62,11 @@ class VT100Parser:
         self.string_payload = ""
         self.string_type = ""
         self.escape_in_string = False
-        self._kitty_chunk_buffers: dict[int, list[str]] = {}
+        self._kitty_active_metadata: dict[str, str] | None = None
+        self._kitty_active_chunks: list[str] = []
+        self._kitty_active_bytes: int = 0
+        self._next_image_id: int = 1000
+        self._next_placement_id: int = 1000
 
         # Terminal Flags
         self.application_cursor_keys = False
@@ -73,17 +80,49 @@ class VT100Parser:
         self.focus_reporting = False
 
     def feed(self, text: str):
-        for char in text:
-            if self.state == self.STATE_GROUND:
-                self._handle_ground(char)
-            elif self.state == self.STATE_ESCAPE:
-                self._handle_escape(char)
-            elif self.state == self.STATE_CSI:
-                self._handle_csi(char)
-            elif self.state == self.STATE_OSC:
-                self._handle_osc(char)
-            elif self.state == self.STATE_STRING:
-                self._handle_string(char)
+        i = 0
+        n = len(text)
+        while i < n:
+            if self.state == self.STATE_STRING:
+                limit = self.MAX_GRAPHIC_STRING_LENGTH if self.string_type == "_" else self.MAX_STRING_LENGTH
+                if self.escape_in_string:
+                    char = text[i]
+                    i += 1
+                    self._handle_string(char)
+                    continue
+
+                idx_esc = text.find("\x1b", i)
+                idx_bel = text.find("\x07", i)
+                idx_st = text.find("\x9c", i)
+                candidates = [c for c in (idx_esc, idx_bel, idx_st) if c != -1]
+                if candidates:
+                    next_delim = min(candidates)
+                    chunk = text[i:next_delim]
+                    if chunk:
+                        avail = max(0, limit - len(self.string_payload))
+                        if avail > 0:
+                            self.string_payload += chunk[:avail]
+                    i = next_delim
+                    char = text[i]
+                    i += 1
+                    self._handle_string(char)
+                else:
+                    chunk = text[i:]
+                    avail = max(0, limit - len(self.string_payload))
+                    if avail > 0:
+                        self.string_payload += chunk[:avail]
+                    break
+            else:
+                char = text[i]
+                i += 1
+                if self.state == self.STATE_GROUND:
+                    self._handle_ground(char)
+                elif self.state == self.STATE_ESCAPE:
+                    self._handle_escape(char)
+                elif self.state == self.STATE_CSI:
+                    self._handle_csi(char)
+                elif self.state == self.STATE_OSC:
+                    self._handle_osc(char)
 
     def _handle_ground(self, char: str):
         if char == "\x1b":
@@ -190,10 +229,18 @@ class VT100Parser:
                     k, v = item.split("=", 1)
                     params[k.strip()] = v.strip()
 
-        action = params.get("a", "t")
+        action = params.get("a", "T")
         quiet = int(params.get("q", "0")) if params.get("q", "").isdigit() else 0
         img_id = int(params.get("i", "0")) if params.get("i", "").isdigit() else 0
         placement_id = int(params.get("p", "0")) if params.get("p", "").isdigit() else 0
+
+        # Security constraint: only direct inline base64 transmission ('t=d' or omitted) is permitted.
+        # File paths ('t=f', 't=t') and shared memory ('t=s') are strictly rejected.
+        transmission_medium = params.get("t", "d")
+        if transmission_medium != "d":
+            if self.write_response and quiet == 0:
+                self.write_response(f"\x1b_Gi={img_id};EBADF\x1b\\".encode("ascii"))
+            return
 
         # Query action: response with OK
         if action == "q":
@@ -210,53 +257,137 @@ class VT100Parser:
             elif delete_target in ("i", "I"):
                 self.screen.delete_graphic_placements("image", image_id=img_id)
             elif delete_target == "p":
-                self.screen.delete_graphic_placements("placement", placement_id=placement_id)
+                self.screen.delete_graphic_placements("placement", image_id=img_id, placement_id=placement_id)
             if self.write_response and quiet == 0:
                 self.write_response(b"\x1b_G;OK\x1b\\")
             return
 
-        # Transmit actions ('t', 'T', 'a', 'p')
-        more_chunks = params.get("m", "0") == "1"
-        buf_key = img_id
-        if data_b64:
-            clean_chunk = "".join(data_b64.split())
-            self._kitty_chunk_buffers.setdefault(buf_key, []).append(clean_chunk)
+        # Placement action for already stored image ('a=p')
+        if action == "p":
+            stored = self.screen.get_stored_graphic(img_id)
+            if not stored:
+                if self.write_response and quiet == 0:
+                    self.write_response(f"\x1b_Gi={img_id};ENOENT\x1b\\".encode("ascii"))
+                return
 
-        if more_chunks:
+            c_param = int(params.get("c", "0")) if params.get("c", "").isdigit() else 0
+            r_param = int(params.get("r", "0")) if params.get("r", "").isdigit() else 0
+            cell_w_est = 9
+            cell_h_est = 18
+
+            if c_param > 0 and r_param > 0:
+                cols = min(self.screen.cols, c_param)
+                rows = r_param
+            elif c_param > 0:
+                cols = min(self.screen.cols, c_param)
+                if stored.pixel_width > 0 and stored.pixel_height > 0:
+                    target_w = cols * cell_w_est
+                    target_h = target_w * (stored.pixel_height / stored.pixel_width)
+                    rows = max(1, round(target_h / cell_h_est))
+                else:
+                    rows = 5
+            elif r_param > 0:
+                rows = r_param
+                if stored.pixel_width > 0 and stored.pixel_height > 0:
+                    target_h = rows * cell_h_est
+                    target_w = target_h * (stored.pixel_width / stored.pixel_height)
+                    cols = min(self.screen.cols, max(1, round(target_w / cell_w_est)))
+                else:
+                    cols = min(self.screen.cols, 10)
+            else:
+                cols = min(self.screen.cols, max(1, (stored.pixel_width + cell_w_est - 1) // cell_w_est) if stored.pixel_width > 0 else 10)
+                rows = max(1, (stored.pixel_height + cell_h_est - 1) // cell_h_est) if stored.pixel_height > 0 else 5
+
+            cursor_advance = (params.get("C", "0") != "1")
+            if placement_id == 0:
+                self._next_placement_id += 1
+                placement_id = self._next_placement_id
+
+            placement = GraphicPlacement(
+                image_id=img_id,
+                placement_id=placement_id,
+                col=self.screen.cursor_x,
+                row=self.screen.cursor_y,
+                abs_row=self.screen.total_lines_scrolled + self.screen.cursor_y,
+                cols=cols,
+                rows=rows,
+                cursor_advance=cursor_advance,
+            )
+            self.screen.add_graphic_placement(placement)
+
+            if cursor_advance:
+                for _ in range(rows):
+                    self.screen.cursor_y += 1
+                    if self.screen.cursor_y > self.screen.scroll_bottom:
+                        self.screen.scroll_up(1)
+                        self.screen.cursor_y = self.screen.scroll_bottom
+                self.screen.cursor_x = 0
+                self.screen.wrap_pending = False
+
+            if self.write_response and quiet == 0:
+                self.write_response(f"\x1b_Gi={img_id};OK\x1b\\".encode("ascii"))
             return
 
-        chunks = self._kitty_chunk_buffers.pop(buf_key, [])
-        full_b64 = "".join(chunks)
-        if not full_b64 and data_b64:
-            full_b64 = "".join(data_b64.split())
+        # Transmission actions ('t' - transmit only, 'T' - transmit and display)
+        more_chunks = (params.get("m", "0") == "1")
+        clean_chunk = "".join(data_b64.split()) if data_b64 else ""
 
-        transmission_medium = params.get("t", "d")
-        raw_bytes: bytes = b""
+        is_continuation = False
+        if self._kitty_active_metadata is not None:
+            active_id = int(self._kitty_active_metadata.get("i", "0"))
+            if img_id == 0 or img_id == active_id:
+                is_continuation = True
 
-        if transmission_medium in ("f", "t") and full_b64:
-            try:
-                path_bytes = base64.b64decode(full_b64)
-                file_path = path_bytes.decode("utf-8", errors="replace").strip()
-                if os.path.isfile(file_path):
-                    with open(file_path, "rb") as f:
-                        raw_bytes = f.read()
-                    if transmission_medium == "t":
-                        try:
-                            os.remove(file_path)
-                        except OSError:
-                            pass
-            except (OSError, UnicodeDecodeError, binascii.Error, ValueError):
-                raw_bytes = b""
-        elif full_b64:
-            try:
-                raw_bytes = base64.b64decode(full_b64)
-            except (binascii.Error, ValueError):
-                raw_bytes = b""
+        if is_continuation:
+            self._kitty_active_chunks.append(clean_chunk)
+            self._kitty_active_bytes += len(clean_chunk)
+            for k, v in params.items():
+                if k != "m":
+                    self._kitty_active_metadata[k] = v
 
-        if not raw_bytes:
+            if self._kitty_active_bytes > self.MAX_IMAGE_BYTES:
+                self._kitty_active_metadata = None
+                self._kitty_active_chunks.clear()
+                self._kitty_active_bytes = 0
+                if self.write_response and quiet == 0:
+                    self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
+                return
+
+            if more_chunks:
+                return
+
+            full_b64 = "".join(self._kitty_active_chunks)
+            params = self._kitty_active_metadata
+            self._kitty_active_metadata = None
+            self._kitty_active_chunks = []
+            self._kitty_active_bytes = 0
+            action = params.get("a", "T")
+            quiet = int(params.get("q", "0")) if params.get("q", "").isdigit() else 0
+            img_id = int(params.get("i", "0")) if params.get("i", "").isdigit() else 0
+            placement_id = int(params.get("p", "0")) if params.get("p", "").isdigit() else 0
+        elif more_chunks:
+            self._kitty_active_metadata = params
+            self._kitty_active_chunks = [clean_chunk]
+            self._kitty_active_bytes = len(clean_chunk)
+            return
+        else:
+            full_b64 = clean_chunk
+
+        try:
+            raw_bytes = base64.b64decode(full_b64)
+        except (binascii.Error, ValueError):
             if self.write_response and quiet == 0:
                 self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
             return
+
+        if not raw_bytes or len(raw_bytes) > self.MAX_IMAGE_BYTES:
+            if self.write_response and quiet == 0:
+                self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
+            return
+
+        if img_id == 0:
+            self._next_image_id += 1
+            img_id = self._next_image_id
 
         fmt_code = int(params.get("f", "100")) if params.get("f", "").isdigit() else 100
         pixel_w = int(params.get("s", "0")) if params.get("s", "").isdigit() else 0
@@ -275,17 +406,30 @@ class VT100Parser:
                         pixel_h = ph
                 except struct.error:
                     pass
+            if pixel_w > self.MAX_IMAGE_WIDTH or pixel_h > self.MAX_IMAGE_HEIGHT:
+                if self.write_response and quiet == 0:
+                    self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
+                return
             clean_b64 = base64.b64encode(raw_bytes).decode("ascii")
         elif fmt_code in (24, 32) and pixel_w > 0 and pixel_h > 0:
+            if pixel_w > self.MAX_IMAGE_WIDTH or pixel_h > self.MAX_IMAGE_HEIGHT:
+                if self.write_response and quiet == 0:
+                    self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
+                return
+            expected_len = pixel_w * pixel_h * (3 if fmt_code == 24 else 4)
+            if len(raw_bytes) < expected_len:
+                if self.write_response and quiet == 0:
+                    self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
+                return
             img_format = "ppm"
             if fmt_code == 24:
                 ppm_header = f"P6\n{pixel_w} {pixel_h}\n255\n".encode("ascii")
-                ppm_data = ppm_header + raw_bytes
+                ppm_data = ppm_header + raw_bytes[:expected_len]
                 clean_b64 = base64.b64encode(ppm_data).decode("ascii")
             else:
                 rgb_buf = bytearray()
                 br, bg, bb = DEFAULT_BG
-                for idx in range(0, min(len(raw_bytes), pixel_w * pixel_h * 4), 4):
+                for idx in range(0, expected_len, 4):
                     r, g, b, a = raw_bytes[idx : idx + 4]
                     if a == 255:
                         rgb_buf.extend((r, g, b))
@@ -300,28 +444,55 @@ class VT100Parser:
         else:
             clean_b64 = base64.b64encode(raw_bytes).decode("ascii")
 
+        stored_img = GraphicImage(
+            image_id=img_id,
+            format=img_format,
+            data=raw_bytes,
+            base64_data=clean_b64,
+            pixel_width=pixel_w,
+            pixel_height=pixel_h,
+        )
+        self.screen.store_graphic(stored_img)
+
+        # Action 't' transmits and stores only (no placement or cursor advance)
+        if action == "t":
+            if self.write_response and quiet == 0:
+                self.write_response(f"\x1b_Gi={img_id};OK\x1b\\".encode("ascii"))
+            return
+
+        # Action 'T' (or default) transmits and places on screen
         c_param = int(params.get("c", "0")) if params.get("c", "").isdigit() else 0
         r_param = int(params.get("r", "0")) if params.get("r", "").isdigit() else 0
-
         cell_w_est = 9
         cell_h_est = 18
 
-        if c_param > 0:
-            cols = c_param
-        elif pixel_w > 0:
-            cols = max(1, (pixel_w + cell_w_est - 1) // cell_w_est)
-        else:
-            cols = 10
-
-        if r_param > 0:
+        if c_param > 0 and r_param > 0:
+            cols = min(self.screen.cols, c_param)
             rows = r_param
-        elif pixel_h > 0:
-            rows = max(1, (pixel_h + cell_h_est - 1) // cell_h_est)
+        elif c_param > 0:
+            cols = min(self.screen.cols, c_param)
+            if pixel_w > 0 and pixel_h > 0:
+                target_w = cols * cell_w_est
+                target_h = target_w * (pixel_h / pixel_w)
+                rows = max(1, round(target_h / cell_h_est))
+            else:
+                rows = 5
+        elif r_param > 0:
+            rows = r_param
+            if pixel_w > 0 and pixel_h > 0:
+                target_h = rows * cell_h_est
+                target_w = target_h * (pixel_w / pixel_h)
+                cols = min(self.screen.cols, max(1, round(target_w / cell_w_est)))
+            else:
+                cols = min(self.screen.cols, 10)
         else:
-            rows = 5
+            cols = min(self.screen.cols, max(1, (pixel_w + cell_w_est - 1) // cell_w_est) if pixel_w > 0 else 10)
+            rows = max(1, (pixel_h + cell_h_est - 1) // cell_h_est) if pixel_h > 0 else 5
 
-        cols = min(self.screen.cols, cols)
-        cursor_advance = (action == "t" and params.get("C", "0") != "1")
+        cursor_advance = (params.get("C", "0") != "1")
+        if placement_id == 0:
+            self._next_placement_id += 1
+            placement_id = self._next_placement_id
 
         placement = GraphicPlacement(
             image_id=img_id,
@@ -338,7 +509,6 @@ class VT100Parser:
             cursor_advance=cursor_advance,
             base64_data=clean_b64,
         )
-
         self.screen.add_graphic_placement(placement)
 
         if cursor_advance:
@@ -349,6 +519,9 @@ class VT100Parser:
                     self.screen.cursor_y = self.screen.scroll_bottom
             self.screen.cursor_x = 0
             self.screen.wrap_pending = False
+
+        if self.write_response and quiet == 0:
+            self.write_response(f"\x1b_Gi={img_id};OK\x1b\\".encode("ascii"))
 
         if self.write_response and quiet == 0:
             self.write_response(f"\x1b_Gi={img_id};OK\x1b\\".encode("ascii"))

@@ -36,7 +36,7 @@ class TerminalConfig:
     confirm_multiline_paste: bool = False
     restore_session: bool = True
     auto_reconnect_ssh: bool = True
-    enable_ligatures: bool = True
+    enable_ligatures: bool = False
 
     @staticmethod
     def default_config_path() -> Path:

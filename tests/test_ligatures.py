@@ -94,15 +94,15 @@ def test_segment_row_cells_preserves_style_boundaries() -> None:
 
 
 def test_config_enable_ligatures_setting() -> None:
-    """Verify enable_ligatures option in TerminalConfig defaults to True and serializes."""
+    """Verify enable_ligatures option in TerminalConfig defaults to False and serializes."""
     cfg = TerminalConfig()
-    assert cfg.enable_ligatures is True
+    assert cfg.enable_ligatures is False
 
     data = cfg.to_dict()
-    assert data["enable_ligatures"] is True
+    assert data["enable_ligatures"] is False
 
-    cfg_disabled = TerminalConfig.from_dict({"enable_ligatures": False})
-    assert cfg_disabled.enable_ligatures is False
+    cfg_enabled = TerminalConfig.from_dict({"enable_ligatures": True})
+    assert cfg_enabled.enable_ligatures is True
 
 
 def test_canvas_renderer_ligatures_integration() -> None:

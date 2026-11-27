@@ -7,6 +7,7 @@ from clownfish.core.models import (
     DEFAULT_BG,
     DEFAULT_FG,
     Cell,
+    GraphicImage,
     GraphicPlacement,
     PromptMarker,
     Row,
@@ -60,11 +61,15 @@ class ScreenBuffer:
 
         self.grid = self.primary_grid
         self.prompt_markers: list[PromptMarker] = []
+        self.stored_graphics: dict[int, GraphicImage] = {}
+        self.graphic_memory_bytes: int = 0
         self.graphic_placements: list[GraphicPlacement] = []
         self.alt_graphic_placements: list[GraphicPlacement] = []
         self.title: str = ""
         self.icon_name: str = ""
         self.cwd: str = ""
+
+    MAX_GRAPHIC_STORE_BYTES: int = 32 * 1024 * 1024  # 32 MB total graphics store limit
 
     def _blank_row(self, cols: int | None = None, is_wrapped: bool = False) -> Row:
         c = cols if cols is not None else self.cols
@@ -73,6 +78,35 @@ class ScreenBuffer:
             is_wrapped=is_wrapped,
         )
 
+    def store_graphic(self, image: GraphicImage) -> None:
+        """Store or update a graphic image in memory with total memory budgeting."""
+        if image.image_id in self.stored_graphics:
+            old_img = self.stored_graphics[image.image_id]
+            self.graphic_memory_bytes = max(0, self.graphic_memory_bytes - len(old_img.data))
+            image.version = old_img.version + 1
+
+        image_size = len(image.data)
+        if image_size > self.MAX_GRAPHIC_STORE_BYTES:
+            return
+
+        active_img_ids = {p.image_id for p in self.graphic_placements} | {p.image_id for p in self.alt_graphic_placements}
+        while self.graphic_memory_bytes + image_size > self.MAX_GRAPHIC_STORE_BYTES and self.stored_graphics:
+            candidates = [iid for iid in self.stored_graphics if iid not in active_img_ids]
+            if not candidates:
+                candidates = list(self.stored_graphics.keys())
+            evict_id = candidates[0]
+            evicted = self.stored_graphics.pop(evict_id)
+            self.graphic_memory_bytes = max(0, self.graphic_memory_bytes - len(evicted.data))
+            self.graphic_placements[:] = [p for p in self.graphic_placements if p.image_id != evict_id]
+            self.alt_graphic_placements[:] = [p for p in self.alt_graphic_placements if p.image_id != evict_id]
+
+        self.stored_graphics[image.image_id] = image
+        self.graphic_memory_bytes += image_size
+
+    def get_stored_graphic(self, image_id: int) -> GraphicImage | None:
+        """Lookup stored graphic by ID."""
+        return self.stored_graphics.get(image_id)
+
     @property
     def active_graphic_placements(self) -> list[GraphicPlacement]:
         """Return the graphic placements corresponding to the active screen buffer."""
@@ -80,6 +114,20 @@ class ScreenBuffer:
 
     def add_graphic_placement(self, placement: GraphicPlacement) -> None:
         """Register a new graphic placement in the active screen buffer."""
+        if placement.image_id in self.stored_graphics:
+            img = self.stored_graphics[placement.image_id]
+            if not placement.data:
+                placement.data = img.data
+            if not placement.format:
+                placement.format = img.format
+            if not placement.base64_data:
+                placement.base64_data = img.base64_data
+            if placement.pixel_width == 0:
+                placement.pixel_width = img.pixel_width
+            if placement.pixel_height == 0:
+                placement.pixel_height = img.pixel_height
+            placement.version = img.version
+
         target_list = self.alt_graphic_placements if self.is_alt_screen else self.graphic_placements
         target_list.append(placement)
         for r in range(placement.row, min(self.rows, placement.row + placement.rows)):
@@ -92,13 +140,28 @@ class ScreenBuffer:
         placement_id: int | None = None,
     ) -> None:
         """Delete graphic placements matching criteria."""
-        target_list = self.alt_graphic_placements if self.is_alt_screen else self.graphic_placements
         if target == "all":
-            target_list.clear()
+            self.graphic_placements.clear()
+            self.alt_graphic_placements.clear()
+            self.stored_graphics.clear()
+            self.graphic_memory_bytes = 0
         elif target == "image" and image_id is not None:
-            target_list[:] = [p for p in target_list if p.image_id != image_id]
+            self.graphic_placements[:] = [p for p in self.graphic_placements if p.image_id != image_id]
+            self.alt_graphic_placements[:] = [p for p in self.alt_graphic_placements if p.image_id != image_id]
+            old = self.stored_graphics.pop(image_id, None)
+            if old:
+                self.graphic_memory_bytes = max(0, self.graphic_memory_bytes - len(old.data))
         elif target == "placement" and placement_id is not None:
-            target_list[:] = [p for p in target_list if p.placement_id != placement_id]
+            if image_id is not None and image_id > 0:
+                self.graphic_placements[:] = [
+                    p for p in self.graphic_placements if not (p.image_id == image_id and p.placement_id == placement_id)
+                ]
+                self.alt_graphic_placements[:] = [
+                    p for p in self.alt_graphic_placements if not (p.image_id == image_id and p.placement_id == placement_id)
+                ]
+            else:
+                self.graphic_placements[:] = [p for p in self.graphic_placements if p.placement_id != placement_id]
+                self.alt_graphic_placements[:] = [p for p in self.alt_graphic_placements if p.placement_id != placement_id]
         self.mark_all_dirty()
 
     def mark_all_dirty(self):
@@ -559,12 +622,14 @@ class ScreenBuffer:
 
         active_rows = all_rows[: last_active_row + 1]
 
-        logical_lines: list[tuple[list[Cell], int | None, list[PromptMarker]]] = []
+        logical_lines: list[tuple[list[Cell], int | None, list[PromptMarker], list[int]]] = []
         current_cells: list[Cell] = []
         cursor_offset: int | None = None
         markers_for_line: list[PromptMarker] = []
+        line_orig_rows: list[int] = []
 
         for r_idx, row in enumerate(active_rows):
+            line_orig_rows.append(r_idx)
             for m in self.prompt_markers:
                 if m.row == r_idx:
                     markers_for_line.append(m)
@@ -592,21 +657,25 @@ class ScreenBuffer:
 
                 current_cells.extend(content_cells)
 
-                logical_lines.append((current_cells, cursor_offset, markers_for_line))
+                logical_lines.append((current_cells, cursor_offset, markers_for_line, line_orig_rows))
                 current_cells = []
                 cursor_offset = None
                 markers_for_line = []
+                line_orig_rows = []
 
-        if current_cells or cursor_offset is not None or markers_for_line:
-            logical_lines.append((current_cells, cursor_offset, markers_for_line))
+        if current_cells or cursor_offset is not None or markers_for_line or line_orig_rows:
+            logical_lines.append((current_cells, cursor_offset, markers_for_line, line_orig_rows))
 
         new_all_rows: list[Row] = []
         new_cursor_abs_row = 0
         new_cursor_col = 0
         new_prompt_markers: list[PromptMarker] = []
+        row_to_new_row: dict[int, int] = {}
 
-        for cells, cur_offset, markers in logical_lines:
+        for cells, cur_offset, markers, orig_row_indices in logical_lines:
             line_start_row = len(new_all_rows)
+            for orig_r in orig_row_indices:
+                row_to_new_row[orig_r] = line_start_row
 
             for m in markers:
                 m.row = line_start_row
@@ -675,6 +744,18 @@ class ScreenBuffer:
         self.total_lines_scrolled = len(self.scrollback)
         self.scroll_offset = max(0, min(len(self.scrollback), self.scroll_offset))
         self.prompt_markers = new_prompt_markers
+
+        # Remap graphic placements to new row positions
+        for p in self.graphic_placements:
+            if p.abs_row in row_to_new_row:
+                p.abs_row = row_to_new_row[p.abs_row]
+            elif p.abs_row > last_active_row:
+                p.abs_row = max(0, p.abs_row + (len(new_all_rows) - len(active_rows)))
+
+        # Prune placements that scrolled past maximum scrollback retention
+        min_retained_abs_row = max(0, self.total_lines_scrolled - (self.scrollback.maxlen or 10_000))
+        self.graphic_placements[:] = [p for p in self.graphic_placements if p.abs_row >= min_retained_abs_row]
+
         if not self.is_alt_screen:
             self.grid = self.primary_grid
 

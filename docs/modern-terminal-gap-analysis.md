@@ -22,9 +22,10 @@ This document analyzes the fundamental capabilities that separate traditional/to
 | **Headless Terminal Interface** | Portability | High | **Implemented** (`HeadlessTerminal` programmatic API) |
 | **macOS Native Bundle (`.app`)** | Distribution | High | **Implemented** (PyInstaller bundle, Info.plist, code signing) |
 | **Package Distribution (PyPI & Tap)** | Distribution | High | **Implemented** (Trusted Publishing & `wispsy/homebrew-tap`) |
-| **High-Performance Layered Canvas** | Performance | High | **Implemented** (Scanline run batching, CALayer/Metal backing, borderless canvas) |
-| **Programming Font Ligatures** | Typography | High | **Implemented** (`clownfish.core.ligatures` segmentation & `enable_ligatures` toggle) |
-| **Terminal Graphics (Kitty)** | Media | High | **Implemented** (Inline PNG & raw RGB/RGBA streaming, queries, deletion) |
+| **Scanline Background Batching & Layering** | Performance | High | **Implemented** (Run batching, borderless canvas configuration) |
+| **Ligature-Aware Monospace Segmentation** | Typography | High | **Implemented** (`clownfish.core.ligatures` segmentation & `enable_ligatures` toggle) |
+| **Terminal Graphics (Kitty)** | Media | High | **Implemented** (Direct Base64 inline streaming, separate store/place actions, queries, deletion) |
+| **Native Metal GPU Backend & Glyph Atlas** | Performance | High | **Roadmap** (Native Metal / Vulkan GPU glyph texture atlas) |
 | **User Experience & Settings UI** | Usability | Medium | **Roadmap** (v0.8.0 configuration UI, search, custom themes, native menus) |
 | **Accessibility (Screen Readers)** | Accessibility | High | **Roadmap** (v0.8.0 accessible text interface) |
 | **Multi-Frontend Expansion** | Portability | High | **Roadmap** (v0.9.0 HTML browser frontend, UIKit/SwiftUI native macOS/iOS) |
@@ -116,20 +117,20 @@ Shells like zsh, fish, and bash (with integration scripts) emit semantic annotat
 
 ---
 
-## 5. Hardware-Accelerated Rendering & Font Ligatures
+## 5. Rendering Performance & Font Ligatures
 
 ### The Implementation in Clownfish (v0.7.0)
-Clownfish achieves high-performance rendering and typography without external C-extension dependencies:
-1. **High-Performance Hardware-Layered Canvas**:
-   - Zero-dependency standard library implementation leveraging OS-level hardware acceleration (Metal / CALayer on macOS).
-   - **Scanline Background Run Batching**: Merges contiguous identical background cells along each row into unified background rectangles, cutting canvas item allocations by over 70% during complex full-screen rendering.
+Clownfish provides optimized 2D canvas rendering and developer typography without external C-extension dependencies:
+1. **Scanline Background Run Batching & Canvas Layering**:
+   - **Scanline Run Batching**: Merges contiguous identical background cells along each row into unified background rectangles, significantly reducing canvas item count during full-screen rendering.
    - **Canvas Optimization**: Configured with `highlightthickness=0` and `borderwidth=0` to eliminate unnecessary frame clipping computations.
    - **Layered Display Model**: Strict z-index ordering: background runs < graphic placements < text & ligature runs < underline/strikethrough lines < selection highlights < search match highlights < cursor.
-2. **Programming Font Ligatures**:
-   - `clownfish.core.ligatures` scans text rows for multi-character programming ligatures (`!=`, `==`, `===`, `->`, `=>`, `<=`, `>=`, `:=`, `/*`, `::`, `...`, `<!--`, `-->`, etc.).
-   - Segments text into contiguous same-style runs and formats ligature groupings for modern developer fonts (Fira Code, JetBrains Mono, Cascadia Code) while locking segment start coordinates to the monospace column grid (`start_col * cell_width`).
+   - *Roadmap*: Native GPU-accelerated Metal rendering backend with dynamic glyph texture atlas on Apple Silicon.
+2. **Ligature-Aware Monospace Text Segmentation**:
+   - `clownfish.core.ligatures` scans text rows for multi-character programming operators (`!=`, `==`, `===`, `->`, `=>`, `<=`, `>=`, `:=`, `/*`, `::`, `...`, `<!--`, `-->`, etc.).
+   - Segments text into contiguous same-style runs and formats operator groupings for developer fonts (Fira Code, JetBrains Mono, Cascadia Code) while locking segment start coordinates to the monospace column grid (`start_col * cell_width`).
    - Ensures zero kerning drift, keeping cursor hit-testing and rectangular mouse selection strictly aligned.
-   - Fully customizable and user-toggleable via `TerminalConfig.enable_ligatures`.
+   - Fully customizable and user-toggleable via `TerminalConfig.enable_ligatures` (defaults to `False`).
 
 ---
 
@@ -137,15 +138,20 @@ Clownfish achieves high-performance rendering and typography without external C-
 
 ### The Implementation in Clownfish (v0.7.0)
 Clownfish provides native support for the Kitty Graphics Protocol (`APC G ... ST`):
-1. **Escape Sequence Parsing**:
-   - Bounded APC buffer parsing (`MAX_GRAPHIC_STRING_LENGTH = 10_485_760`, 10 MB) handling key-value control directives (`a`, `f`, `m`, `s`, `v`, `i`, `p`, `C`, etc.).
-   - **Chunked Payload Streaming**: Multi-part Base64 data transfers (`m=1` continuing, `m=0` complete) assembled seamlessly across escape sequences.
+1. **Escape Sequence Parsing & Protocol Actions**:
+   - Bounded APC buffer parsing (`MAX_GRAPHIC_STRING_LENGTH = 10_485_760`, 10 MB) handling control directives (`a`, `f`, `m`, `s`, `v`, `i`, `p`, `C`, etc.).
+   - **Action Separation**: Separate transmission (`a=t`), transmit & display (`a=T`), and placement of stored images (`a=p`).
+   - **Chunked Payload Streaming**: Multi-part Base64 data transfers (`m=1` continuing, `m=0` complete) assembled seamlessly across escape sequences without requiring repeated image metadata on continuation chunks.
    - **Capability Query Support**: Handshakes with `a=q` requests by replying with standard `\x1b_Gi={id};OK\x1b\` responses.
    - **Lifecycle & Deletion**: Supports selective deletion by image ID (`d=i,i={id}`), placement ID (`d=p,p={id}`), or global purge (`d=a`).
-2. **Zero-Dependency Image Formats**:
+2. **Security & Memory Budgeting**:
+   - **Strict Security Isolation**: Only direct inline Base64 streaming (`t=d` or default) is accepted. File path transmissions (`t=f`, `t=t`) and shared memory (`t=s`) are strictly rejected with `EBADF` to prevent unauthorized local file reads or deletions.
+   - **Memory Limits**: 10 MB limit per image, 32 MB total graphics store limit with automatic eviction of oldest unreferenced images on memory pressure.
+3. **Zero-Dependency Image Formats & Aspect-Ratio Scaling**:
    - **PNG (`f=100`)**: Geometry extracted directly from standard PNG IHDR header (`struct.unpack(">II", raw_bytes[16:24])`) without external libraries.
    - **Raw 24-bit RGB (`f=24`) & 32-bit RGBA (`f=32`)**: Dynamically transformed via pure Python stdlib into Netpbm PPM (`P6`) binary format, enabling native `tk.PhotoImage` loading without PIL/Pillow.
-3. **Screen & Scrollback Coordination**:
+   - **Aspect-Ratio-Preserving Scaling**: Placements specifying columns (`c`) and rows (`r`) scale to fit within the cell rectangle while preserving the original aspect ratio.
+4. **Screen & Scrollback Coordination**:
    - Placements are tracked in `ScreenBuffer.graphic_placements` (and `alt_graphic_placements` for full-screen alt-screens).
    - Placements track absolute scroll rows (`abs_row`), adjusting visual viewport coordinates smoothly during user scrolling.
-   - Placements are automatically culled when scrolled beyond maximum scrollback retention (`max_scrollback = 10,000`).
+   - Placements are remapped across terminal column reflow (`_reflow_primary`) and culled when scrolled beyond maximum scrollback retention.
