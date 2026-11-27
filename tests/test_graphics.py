@@ -203,22 +203,103 @@ def test_kitty_graphics_delete_actions() -> None:
     assert screen.get_stored_graphic(102) is None
 
 
+def test_kitty_graphics_parameters_validation() -> None:
+    """Verify malformed or oversized numeric parameters do not crash the parser."""
+    screen = ScreenBuffer(cols=80, rows=24)
+    responses: list[bytes] = []
+    parser = VT100Parser(screen=screen, write_response=responses.append)
+
+    # 1. 5000-digit integer string (exceeds Python string integer conversion limits if unhandled)
+    huge_int = "9" * 5000
+    parser.feed(f"\x1b_Ga=q,i={huge_int};\x1b\\")
+    # Must not raise ValueError; falls back to default bounded 0
+    assert len(responses) == 1
+    assert responses[0] == b"\x1b_Gi=0;OK\x1b\\"
+
+    # 2. Non-numeric / malformed parameters
+    responses.clear()
+    parser.feed("\x1b_Ga=q,i=invalid_id,q=foo;\x1b\\")
+    assert len(responses) == 1
+    assert responses[0] == b"\x1b_Gi=0;OK\x1b\\"
+
+
 def test_kitty_graphics_retransmit_replacement() -> None:
-    """Verify retransmitting an existing image ID updates data and version."""
+    """Verify retransmitting an existing image ID updates data, version, and active placements."""
     screen = ScreenBuffer(cols=80, rows=24)
     parser = VT100Parser(screen=screen)
 
-    # First transmission
-    parser.feed(f"\x1b_Ga=t,i=200,f=100;{SAMPLE_PNG_B64}\x1b\\")
+    # First transmission and placement
+    parser.feed(f"\x1b_Ga=T,i=200,f=100,c=2,r=2;{SAMPLE_PNG_B64}\x1b\\")
+    assert len(screen.graphic_placements) == 1
+    p1 = screen.graphic_placements[0]
+    assert p1.version == 1
+
     stored1 = screen.get_stored_graphic(200)
     assert stored1 is not None
-    v1 = stored1.version
+    assert stored1.version == 1
 
-    # Retransmit under same image ID
-    parser.feed(f"\x1b_Ga=t,i=200,f=100;{SAMPLE_PNG_B64}\x1b\\")
+    # Retransmit new data under same image ID (2x1 raw RGB)
+    rgb_bytes = bytes([255, 0, 0, 0, 0, 255])
+    b64_rgb = base64.b64encode(rgb_bytes).decode("ascii")
+    parser.feed(f"\x1b_Ga=t,i=200,f=24,s=2,v=1;{b64_rgb}\x1b\\")
+
     stored2 = screen.get_stored_graphic(200)
     assert stored2 is not None
-    assert stored2.version == v1 + 1
+    assert stored2.version == 2
+    assert stored2.format == "ppm"
+
+    # Active placement must also be synchronized to version 2 with updated data
+    assert screen.graphic_placements[0].version == 2
+    assert screen.graphic_placements[0].format == "ppm"
+
+
+def test_kitty_graphics_wrapped_line_precise_reflow() -> None:
+    """Verify placement on second row of a wrapped logical line remaps accurately upon column resize."""
+    screen = ScreenBuffer(cols=80, rows=24)
+    parser = VT100Parser(screen=screen)
+    # Fill row 0 with 80 characters + 10 chars on row 1, causing auto-wrap onto row 1
+    parser.feed("A" * 80 + "B" * 10)
+    assert screen.cursor_y == 1
+    assert screen.cursor_x == 10
+
+    # Place a graphic at row 1, col 10 (cell offset 90 in the logical line)
+    parser.feed(f"\x1b_Ga=T,i=400,c=4,r=2,C=1;{SAMPLE_PNG_B64}\x1b\\")
+
+    placement = screen.graphic_placements[0]
+    assert placement.row == 1
+    assert placement.col == 10
+
+    # Resize columns from 80 down to 40
+    # In 40-col grid: row 0 = cells 0-39, row 1 = cells 40-79, row 2 = cells 80-119
+    # Cell 90 maps to row 2, col 10
+    screen.resize(40, 24)
+
+    assert screen.graphic_placements[0].abs_row == 2
+    assert screen.graphic_placements[0].col == 10
+
+
+def test_kitty_graphics_reflow_with_deep_scrollback() -> None:
+    """Verify graphic placement coordinates remain valid during reflow after deep scrolling."""
+    screen = ScreenBuffer(cols=80, rows=24)
+    parser = VT100Parser(screen=screen)
+    # Scroll 500 lines into scrollback
+    for i in range(500):
+        parser.feed(f"Line {i}\r\n")
+
+    # Place graphic on visible row 2, col 5
+    screen.move_cursor(2, 5)
+    parser.feed(f"\x1b_Ga=T,i=500,c=4,r=2,C=1;{SAMPLE_PNG_B64}\x1b\\")
+
+    assert len(screen.graphic_placements) == 1
+    placement = screen.graphic_placements[0]
+    expected_initial_abs = screen.total_lines_scrolled + 2
+    assert placement.abs_row == expected_initial_abs
+
+    # Resize columns
+    screen.resize(100, 24)
+    assert len(screen.graphic_placements) == 1
+    # Absolute row should remain valid and within retained range
+    assert screen.graphic_placements[0].abs_row >= 0
 
 
 def test_kitty_graphics_reflow_remapping() -> None:
@@ -266,6 +347,20 @@ def test_canvas_renderer_kitty_graphics_integration() -> None:
         renderer.render(screen, cols=80, rows=24)
         canvas_items = canvas.find_withtag("graphic_item")
         assert len(canvas_items) == 1
+        initial_image_name = canvas.itemcget(canvas_items[0], "image")
+
+        # Retransmit different image under same ID 88
+        rgb_bytes = bytes([255, 0, 0, 0, 255, 0])
+        b64_rgb = base64.b64encode(rgb_bytes).decode("ascii")
+        parser.feed(f"\x1b_Ga=t,i=88,f=24,s=2,v=1;{b64_rgb}\x1b\\")
+        assert screen.graphic_placements[0].version == 2
+
+        # Re-render onto canvas: item image must be reconfigured to new PhotoImage
+        renderer.render(screen, cols=80, rows=24)
+        updated_items = canvas.find_withtag("graphic_item")
+        assert len(updated_items) == 1
+        updated_image_name = canvas.itemcget(updated_items[0], "image")
+        assert updated_image_name != initial_image_name
 
         # Delete image
         parser.feed("\x1b_Ga=d,d=i,i=88;\x1b\\")

@@ -103,6 +103,20 @@ class ScreenBuffer:
         self.stored_graphics[image.image_id] = image
         self.graphic_memory_bytes += image_size
 
+        # Synchronize active placements with the updated image data and version
+        target_lists = [self.graphic_placements, self.alt_graphic_placements]
+        for t_list in target_lists:
+            for p in t_list:
+                if p.image_id == image.image_id:
+                    p.version = image.version
+                    p.data = image.data
+                    p.format = image.format
+                    p.base64_data = image.base64_data
+                    p.pixel_width = image.pixel_width
+                    p.pixel_height = image.pixel_height
+                    for r in range(p.row, min(self.rows, p.row + p.rows)):
+                        self.dirty_lines.add(r)
+
     def get_stored_graphic(self, image_id: int) -> GraphicImage | None:
         """Lookup stored graphic by ID."""
         return self.stored_graphics.get(image_id)
@@ -621,15 +635,16 @@ class ScreenBuffer:
                 break
 
         active_rows = all_rows[: last_active_row + 1]
+        base_abs = max(0, self.total_lines_scrolled - len(self.scrollback))
 
-        logical_lines: list[tuple[list[Cell], int | None, list[PromptMarker], list[int]]] = []
+        logical_lines: list[tuple[list[Cell], int | None, list[PromptMarker], list[tuple[int, int]]]] = []
         current_cells: list[Cell] = []
         cursor_offset: int | None = None
         markers_for_line: list[PromptMarker] = []
-        line_orig_rows: list[int] = []
+        line_orig_rows: list[tuple[int, int]] = []
 
         for r_idx, row in enumerate(active_rows):
-            line_orig_rows.append(r_idx)
+            line_orig_rows.append((r_idx, len(current_cells)))
             for m in self.prompt_markers:
                 if m.row == r_idx:
                     markers_for_line.append(m)
@@ -670,12 +685,12 @@ class ScreenBuffer:
         new_cursor_abs_row = 0
         new_cursor_col = 0
         new_prompt_markers: list[PromptMarker] = []
-        row_to_new_row: dict[int, int] = {}
+        row_offset_to_new_pos: dict[int, tuple[int, int]] = {}
 
-        for cells, cur_offset, markers, orig_row_indices in logical_lines:
+        for cells, cur_offset, markers, orig_row_data in logical_lines:
             line_start_row = len(new_all_rows)
-            for orig_r in orig_row_indices:
-                row_to_new_row[orig_r] = line_start_row
+            for orig_r, cell_off in orig_row_data:
+                row_offset_to_new_pos[orig_r] = (line_start_row, cell_off)
 
             for m in markers:
                 m.row = line_start_row
@@ -745,11 +760,15 @@ class ScreenBuffer:
         self.scroll_offset = max(0, min(len(self.scrollback), self.scroll_offset))
         self.prompt_markers = new_prompt_markers
 
-        # Remap graphic placements to new row positions
+        # Remap graphic placements with precise cell anchoring within logical lines
         for p in self.graphic_placements:
-            if p.abs_row in row_to_new_row:
-                p.abs_row = row_to_new_row[p.abs_row]
-            elif p.abs_row > last_active_row:
+            orig_r_idx = p.abs_row - base_abs
+            if orig_r_idx in row_offset_to_new_pos:
+                line_start, cell_off = row_offset_to_new_pos[orig_r_idx]
+                total_cell_off = cell_off + p.col
+                p.abs_row = line_start + (total_cell_off // new_cols)
+                p.col = total_cell_off % new_cols
+            elif orig_r_idx > last_active_row:
                 p.abs_row = max(0, p.abs_row + (len(new_all_rows) - len(active_rows)))
 
         # Prune placements that scrolled past maximum scrollback retention

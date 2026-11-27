@@ -306,9 +306,10 @@ class TkCanvasRenderer:
 
                     cache_key = (p.image_id, p.version, fit_w, fit_h)
 
-                    if cache_key not in self._photo_images and p.base64_data:
+                    img_data = p.data if p.format == "ppm" else (p.base64_data or p.data)
+                    if cache_key not in self._photo_images and img_data:
                         try:
-                            raw_photo = tk.PhotoImage(data=p.base64_data, format=p.format)
+                            raw_photo = tk.PhotoImage(data=img_data, format=p.format)
                             scaled_photo = self._scale_photo(raw_photo, fit_w, fit_h)
                             self._photo_images[cache_key] = scaled_photo
                         except (tk.TclError, RuntimeError, ValueError):
@@ -321,6 +322,7 @@ class TkCanvasRenderer:
                         existing = self.canvas.find_withtag(tag)
                         if existing:
                             self.canvas.coords(tag, gx, gy)
+                            self.canvas.itemconfigure(tag, image=photo)
                         else:
                             self.canvas.create_image(
                                 gx, gy, image=photo, anchor="nw", tags=(tag, "graphic_item")
@@ -333,12 +335,16 @@ class TkCanvasRenderer:
             if not matched:
                 self.canvas.delete(item)
 
-        # Prune cached PhotoImages no longer in active screen placements
+        # Prune cached PhotoImages no longer in active screen placements or exceeding cache capacity
         if placements:
             active_ids = {p.image_id for p in placements}
             for cached_key in list(self._photo_images.keys()):
                 if cached_key[0] not in active_ids:
                     del self._photo_images[cached_key]
+            # Enforce max cached photos limit (64 entries)
+            while len(self._photo_images) > 64:
+                oldest_key = next(iter(self._photo_images))
+                del self._photo_images[oldest_key]
         elif self._photo_images:
             self._photo_images.clear()
             self.canvas.delete("graphic_item")

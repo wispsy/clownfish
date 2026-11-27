@@ -31,6 +31,23 @@ class VT100Parser:
     MAX_PARAMS: int = 64
     MAX_SUBPARAMS: int = 16
 
+    @staticmethod
+    def _parse_bounded_int(
+        val: str,
+        default: int = 0,
+        max_val: int = 2_147_483_647,
+        max_digits: int = 10,
+    ) -> int:
+        """Safely parse a non-negative integer parameter bounded by digit length and value."""
+        v = val.strip()
+        if not v or not v.isdigit() or len(v) > max_digits:
+            return default
+        try:
+            n = int(v)
+            return min(max(0, n), max_val)
+        except (ValueError, OverflowError):
+            return default
+
     def __init__(
         self,
         screen: ScreenBuffer,
@@ -230,9 +247,9 @@ class VT100Parser:
                     params[k.strip()] = v.strip()
 
         action = params.get("a", "T")
-        quiet = int(params.get("q", "0")) if params.get("q", "").isdigit() else 0
-        img_id = int(params.get("i", "0")) if params.get("i", "").isdigit() else 0
-        placement_id = int(params.get("p", "0")) if params.get("p", "").isdigit() else 0
+        quiet = self._parse_bounded_int(params.get("q", "0"), default=0, max_val=2)
+        img_id = self._parse_bounded_int(params.get("i", "0"))
+        placement_id = self._parse_bounded_int(params.get("p", "0"))
 
         # Security constraint: only direct inline base64 transmission ('t=d' or omitted) is permitted.
         # File paths ('t=f', 't=t') and shared memory ('t=s') are strictly rejected.
@@ -270,8 +287,8 @@ class VT100Parser:
                     self.write_response(f"\x1b_Gi={img_id};ENOENT\x1b\\".encode("ascii"))
                 return
 
-            c_param = int(params.get("c", "0")) if params.get("c", "").isdigit() else 0
-            r_param = int(params.get("r", "0")) if params.get("r", "").isdigit() else 0
+            c_param = self._parse_bounded_int(params.get("c", "0"))
+            r_param = self._parse_bounded_int(params.get("r", "0"))
             cell_w_est = 9
             cell_h_est = 18
 
@@ -334,7 +351,7 @@ class VT100Parser:
 
         is_continuation = False
         if self._kitty_active_metadata is not None:
-            active_id = int(self._kitty_active_metadata.get("i", "0"))
+            active_id = self._parse_bounded_int(self._kitty_active_metadata.get("i", "0"))
             if img_id == 0 or img_id == active_id:
                 is_continuation = True
 
@@ -362,9 +379,9 @@ class VT100Parser:
             self._kitty_active_chunks = []
             self._kitty_active_bytes = 0
             action = params.get("a", "T")
-            quiet = int(params.get("q", "0")) if params.get("q", "").isdigit() else 0
-            img_id = int(params.get("i", "0")) if params.get("i", "").isdigit() else 0
-            placement_id = int(params.get("p", "0")) if params.get("p", "").isdigit() else 0
+            quiet = self._parse_bounded_int(params.get("q", "0"), default=0, max_val=2)
+            img_id = self._parse_bounded_int(params.get("i", "0"))
+            placement_id = self._parse_bounded_int(params.get("p", "0"))
         elif more_chunks:
             self._kitty_active_metadata = params
             self._kitty_active_chunks = [clean_chunk]
@@ -389,12 +406,13 @@ class VT100Parser:
             self._next_image_id += 1
             img_id = self._next_image_id
 
-        fmt_code = int(params.get("f", "100")) if params.get("f", "").isdigit() else 100
-        pixel_w = int(params.get("s", "0")) if params.get("s", "").isdigit() else 0
-        pixel_h = int(params.get("v", "0")) if params.get("v", "").isdigit() else 0
+        fmt_code = self._parse_bounded_int(params.get("f", "100"), default=100, max_val=255)
+        pixel_w = self._parse_bounded_int(params.get("s", "0"), max_val=self.MAX_IMAGE_WIDTH)
+        pixel_h = self._parse_bounded_int(params.get("v", "0"), max_val=self.MAX_IMAGE_HEIGHT)
         img_format = "png"
         clean_b64 = ""
 
+        final_data = raw_bytes
         if fmt_code == 100 or raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
             img_format = "png"
             if len(raw_bytes) >= 24 and raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -411,6 +429,7 @@ class VT100Parser:
                     self.write_response(f"\x1b_Gi={img_id};EINVAL\x1b\\".encode("ascii"))
                 return
             clean_b64 = base64.b64encode(raw_bytes).decode("ascii")
+            final_data = raw_bytes
         elif fmt_code in (24, 32) and pixel_w > 0 and pixel_h > 0:
             if pixel_w > self.MAX_IMAGE_WIDTH or pixel_h > self.MAX_IMAGE_HEIGHT:
                 if self.write_response and quiet == 0:
@@ -426,6 +445,7 @@ class VT100Parser:
                 ppm_header = f"P6\n{pixel_w} {pixel_h}\n255\n".encode("ascii")
                 ppm_data = ppm_header + raw_bytes[:expected_len]
                 clean_b64 = base64.b64encode(ppm_data).decode("ascii")
+                final_data = ppm_data
             else:
                 rgb_buf = bytearray()
                 br, bg, bb = DEFAULT_BG
@@ -441,13 +461,14 @@ class VT100Parser:
                 ppm_header = f"P6\n{pixel_w} {pixel_h}\n255\n".encode("ascii")
                 ppm_data = ppm_header + bytes(rgb_buf)
                 clean_b64 = base64.b64encode(ppm_data).decode("ascii")
+                final_data = ppm_data
         else:
             clean_b64 = base64.b64encode(raw_bytes).decode("ascii")
 
         stored_img = GraphicImage(
             image_id=img_id,
             format=img_format,
-            data=raw_bytes,
+            data=final_data,
             base64_data=clean_b64,
             pixel_width=pixel_w,
             pixel_height=pixel_h,
@@ -461,8 +482,8 @@ class VT100Parser:
             return
 
         # Action 'T' (or default) transmits and places on screen
-        c_param = int(params.get("c", "0")) if params.get("c", "").isdigit() else 0
-        r_param = int(params.get("r", "0")) if params.get("r", "").isdigit() else 0
+        c_param = self._parse_bounded_int(params.get("c", "0"))
+        r_param = self._parse_bounded_int(params.get("r", "0"))
         cell_w_est = 9
         cell_h_est = 18
 
@@ -497,7 +518,7 @@ class VT100Parser:
         placement = GraphicPlacement(
             image_id=img_id,
             placement_id=placement_id,
-            data=raw_bytes,
+            data=final_data,
             format=img_format,
             col=self.screen.cursor_x,
             row=self.screen.cursor_y,
