@@ -137,8 +137,29 @@ def publish_to_tap(
             check=True,
         )
         print(f"Pushing updates to {tap_repo}...")
-        subprocess.run(["git", "-C", tmp_dir, "push", "origin", "main"], check=True)
-        print("✅ Successfully published to Homebrew tap!")
+        push_res = subprocess.run(
+            ["git", "-C", tmp_dir, "push", "origin", "main"],
+            capture_output=True,
+            text=True,
+        )
+        if push_res.returncode == 0:
+            print("✅ Successfully published to Homebrew tap via direct push!")
+            return
+
+        print("Direct push to main declined (protected branch). Creating pull request...")
+        branch_name = f"feat/clownfish-v{version}"
+        subprocess.run(["git", "-C", tmp_dir, "checkout", "-b", branch_name], check=True)
+        subprocess.run(["git", "-C", tmp_dir, "push", "-u", "origin", branch_name], check=True)
+        pr_cmd = [
+            "gh", "pr", "create",
+            "--repo", tap_repo,
+            "--base", "main",
+            "--head", branch_name,
+            "--title", commit_msg,
+            "--body", f"Automated Homebrew formula and cask update for Clownfish v{version}.",
+        ]
+        subprocess.run(pr_cmd, check=True)
+        print("✅ Pull request created for Homebrew tap!")
 
 
 def main() -> None:
