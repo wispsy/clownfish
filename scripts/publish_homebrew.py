@@ -139,6 +139,7 @@ def publish_to_tap(
         print(f"Pushing updates to {tap_repo}...")
         push_res = subprocess.run(
             ["git", "-C", tmp_dir, "push", "origin", "main"],
+            check=False,
             capture_output=True,
             text=True,
         )
