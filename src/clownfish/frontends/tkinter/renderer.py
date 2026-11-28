@@ -20,7 +20,7 @@ class TkCanvasRenderer:
         self.config = config or TerminalConfig()
         try:
             self.canvas.configure(highlightthickness=0, borderwidth=0)
-        except (tk.TclError, AttributeError):
+        except tk.TclError, AttributeError:
             pass
 
         font_family = self.config.font_family
@@ -29,12 +29,39 @@ class TkCanvasRenderer:
             (False, False): tkfont.Font(family=font_family, size=font_size),
             (True, False): tkfont.Font(family=font_family, size=font_size, weight="bold"),
             (False, True): tkfont.Font(family=font_family, size=font_size, slant="italic"),
-            (True, True): tkfont.Font(family=font_family, size=font_size, weight="bold", slant="italic"),
+            (True, True): tkfont.Font(
+                family=font_family, size=font_size, weight="bold", slant="italic"
+            ),
         }
         self.cell_w = self.fonts[(False, False)].measure("M")
         self.cell_h = self.fonts[(False, False)].metrics("linespace")
+        self.pad_x = getattr(self.config, "padding_x", 8)
+        self.pad_y = getattr(self.config, "padding_y", 6)
         self._last_cursor_state: tuple[int, int, bool, int, int] | None = None
         self._photo_images: dict[tuple[int, int, int, int], tk.PhotoImage] = {}
+
+    def update_config(self, config: TerminalConfig) -> None:
+        """Update active configuration, metrics, and padding."""
+        self.config = config
+        self.pad_x = getattr(self.config, "padding_x", 8)
+        self.pad_y = getattr(self.config, "padding_y", 6)
+        font_family = self.config.font_family
+        font_size = self.config.font_size
+        self.fonts = {
+            (False, False): tkfont.Font(family=font_family, size=font_size),
+            (True, False): tkfont.Font(family=font_family, size=font_size, weight="bold"),
+            (False, True): tkfont.Font(family=font_family, size=font_size, slant="italic"),
+            (True, True): tkfont.Font(
+                family=font_family, size=font_size, weight="bold", slant="italic"
+            ),
+        }
+        self.cell_w = self.fonts[(False, False)].measure("M")
+        self.cell_h = self.fonts[(False, False)].metrics("linespace")
+        try:
+            self.canvas.configure(bg=self.rgb_to_hex(self.config.default_bg))
+        except tk.TclError, AttributeError:
+            pass
+        self._last_cursor_state = None
 
     @staticmethod
     def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
@@ -68,8 +95,8 @@ class TkCanvasRenderer:
         self._last_cursor_state = cursor_state
         self.canvas.delete("cursor")
         if screen.cursor_visible and screen.scroll_offset == 0:
-            cx = screen.cursor_x * self.cell_w
-            cy = screen.cursor_y * self.cell_h
+            cx = self.pad_x + screen.cursor_x * self.cell_w
+            cy = self.pad_y + screen.cursor_y * self.cell_h
             style = getattr(screen, "cursor_style", 2)
             if style in (3, 4):  # Underline
                 self.canvas.create_rectangle(
@@ -122,14 +149,13 @@ class TkCanvasRenderer:
         for r in range(r1, r2 + 1):
             sc = c1 if r == r1 else 0
             ec = c2 if r == r2 else cols - 1
-            x1 = sc * self.cell_w
-            y1 = r * self.cell_h
-            x2 = (ec + 1) * self.cell_w
-            y2 = (r + 1) * self.cell_h
+            x1 = self.pad_x + sc * self.cell_w
+            y1 = self.pad_y + r * self.cell_h
+            x2 = self.pad_x + (ec + 1) * self.cell_w
+            y2 = self.pad_y + (r + 1) * self.cell_h
 
             self.canvas.create_rectangle(
-                x1, y1, x2, y2,
-                fill=self.config.selection_color, outline="", tags="selection_box"
+                x1, y1, x2, y2, fill=self.config.selection_color, outline="", tags="selection_box"
             )
 
         self.canvas.tag_raise("text_item")
@@ -157,10 +183,10 @@ class TkCanvasRenderer:
             if 0 <= canvas_row < rows:
                 sc = max(0, min(cols - 1, m.start_col))
                 ec = max(0, min(cols - 1, m.end_col - 1))
-                x1 = sc * self.cell_w
-                y1 = canvas_row * self.cell_h
-                x2 = (ec + 1) * self.cell_w
-                y2 = (canvas_row + 1) * self.cell_h
+                x1 = self.pad_x + sc * self.cell_w
+                y1 = self.pad_y + canvas_row * self.cell_h
+                x2 = self.pad_x + (ec + 1) * self.cell_w
+                y2 = self.pad_y + (canvas_row + 1) * self.cell_h
 
                 is_active = m == active_match
                 color = "#ff9900" if is_active else self.config.search_bg
@@ -184,7 +210,7 @@ class TkCanvasRenderer:
     def _render_row(self, screen: ScreenBuffer, r: int, cols: int) -> None:
         tag = f"row_{r}"
         self.canvas.delete(tag)
-        y = r * self.cell_h
+        y = self.pad_y + r * self.cell_h
         row_cells = screen.get_visible_row(r)
         enable_lig = getattr(self.config, "enable_ligatures", True)
         segments = segment_row_cells(row_cells, cols, enable_ligatures=enable_lig)
@@ -200,9 +226,9 @@ class TkCanvasRenderer:
             if bg != current_bg:
                 if current_bg is not None and current_bg != DEFAULT_BG:
                     self.canvas.create_rectangle(
-                        bg_start_col * self.cell_w,
+                        self.pad_x + bg_start_col * self.cell_w,
                         y,
-                        bg_end_col * self.cell_w,
+                        self.pad_x + bg_end_col * self.cell_w,
                         y + self.cell_h,
                         fill=self.rgb_to_hex(current_bg),
                         outline="",
@@ -214,9 +240,9 @@ class TkCanvasRenderer:
 
         if current_bg is not None and current_bg != DEFAULT_BG:
             self.canvas.create_rectangle(
-                bg_start_col * self.cell_w,
+                self.pad_x + bg_start_col * self.cell_w,
                 y,
-                bg_end_col * self.cell_w,
+                self.pad_x + bg_end_col * self.cell_w,
                 y + self.cell_h,
                 fill=self.rgb_to_hex(current_bg),
                 outline="",
@@ -227,12 +253,14 @@ class TkCanvasRenderer:
         for seg in segments:
             st = seg.style
             fg = st.bg if st.reverse else st.fg
-            x1 = seg.start_col * self.cell_w
-            x2 = seg.end_col * self.cell_w
+            x1 = self.pad_x + seg.start_col * self.cell_w
+            x2 = self.pad_x + seg.end_col * self.cell_w
 
             if seg.text.strip():
                 font = self.fonts[(st.bold, st.italic)]
-                text_tags = (tag, "text_item", "ligature_item") if seg.is_ligature else (tag, "text_item")
+                text_tags = (
+                    (tag, "text_item", "ligature_item") if seg.is_ligature else (tag, "text_item")
+                )
                 self.canvas.create_text(
                     x1,
                     y,
@@ -260,6 +288,7 @@ class TkCanvasRenderer:
             return photo
 
         import math
+
         gcd_x = math.gcd(cur_w, target_w)
         gcd_y = math.gcd(cur_h, target_h)
         zx = target_w // gcd_x
@@ -312,13 +341,13 @@ class TkCanvasRenderer:
                             raw_photo = tk.PhotoImage(data=img_data, format=p.format)
                             scaled_photo = self._scale_photo(raw_photo, fit_w, fit_h)
                             self._photo_images[cache_key] = scaled_photo
-                        except (tk.TclError, RuntimeError, ValueError):
+                        except tk.TclError, RuntimeError, ValueError:
                             pass
 
                     photo = self._photo_images.get(cache_key)
                     if photo:
-                        gx = p.col * self.cell_w
-                        gy = visible_row * self.cell_h
+                        gx = self.pad_x + p.col * self.cell_w
+                        gy = self.pad_y + visible_row * self.cell_h
                         existing = self.canvas.find_withtag(tag)
                         if existing:
                             self.canvas.coords(tag, gx, gy)
@@ -348,4 +377,3 @@ class TkCanvasRenderer:
         elif self._photo_images:
             self._photo_images.clear()
             self.canvas.delete("graphic_item")
-

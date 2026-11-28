@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from clownfish.transports.pty import PTYTransport
     from clownfish.transports.ssh import SSHTransport
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "Cell",
     "CommandResult",
@@ -129,7 +129,7 @@ def _run_command_headless(command: str, cols: int = 80, rows: int = 24) -> int:
     if transport._proc:
         try:
             exit_code = transport._proc.wait(timeout=0.5) or 0
-        except (subprocess.TimeoutExpired, OSError):
+        except subprocess.TimeoutExpired, OSError:
             exit_code = transport._proc.poll() or 0
 
     transport.close()
@@ -167,7 +167,7 @@ def _run_interactive_tty_bridge(
                 transport.resize(ts.columns, ts.lines)
             except OSError:
                 pass
-        except (termios.error, OSError):
+        except termios.error, OSError:
             is_tty = False
 
     def on_pty_data(data: bytes) -> None:
@@ -200,7 +200,7 @@ def _run_interactive_tty_bridge(
 
         try:
             old_sigwinch = signal.signal(signal.SIGWINCH, handle_sigwinch)
-        except (ValueError, OSError):
+        except ValueError, OSError:
             pass
 
     def stdin_reader() -> None:
@@ -220,13 +220,13 @@ def _run_interactive_tty_bridge(
                     if not text:
                         break
                     transport.write(text.encode("utf-8"))
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 break
 
     if is_tty and old_termios is not None:
         try:
             tty.setraw(sys.stdin.fileno())
-        except (termios.error, OSError):
+        except termios.error, OSError:
             pass
 
     stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
@@ -240,17 +240,17 @@ def _run_interactive_tty_bridge(
         if is_tty and old_termios is not None:
             try:
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_termios)
-            except (termios.error, OSError):
+            except termios.error, OSError:
                 pass
         if old_sigwinch is not None and hasattr(signal, "SIGWINCH"):
             try:
                 signal.signal(signal.SIGWINCH, old_sigwinch)
-            except (ValueError, OSError):
+            except ValueError, OSError:
                 pass
         if hasattr(transport, "_reader_thread") and transport._reader_thread:
             try:
                 transport._reader_thread.join(timeout=0.5)
-            except (RuntimeError, TimeoutError):
+            except RuntimeError, TimeoutError:
                 pass
         transport.close()
 
@@ -258,7 +258,7 @@ def _run_interactive_tty_bridge(
     if isinstance(transport, PTYTransport) and transport._proc:
         try:
             exit_code = transport._proc.wait(timeout=0.2) or 0
-        except (subprocess.TimeoutExpired, OSError):
+        except subprocess.TimeoutExpired, OSError:
             exit_code = transport._proc.poll() or 0
     return exit_code
 
@@ -302,7 +302,9 @@ def main(args: list[str] | None = None) -> None:
     if argv and argv[0] in ("-h", "--help"):
         print(f"clownfish {__version__} - A modern terminal emulator written in Python and Tkinter")
         print("\nUsage:\n  clownfish [options] [command]")
-        print("\nCommands:\n  ssh <destination>   Connect to a remote SSH host (e.g. clownfish ssh user@host -p 22)")
+        print(
+            "\nCommands:\n  ssh <destination>   Connect to a remote SSH host (e.g. clownfish ssh user@host -p 22)"
+        )
         print("\nOptions:")
         print("  -v, --version       Show version number and exit")
         print("  -h, --help          Show this help message and exit")
@@ -320,12 +322,12 @@ def main(args: list[str] | None = None) -> None:
         c_idx = argv.index("-c")
         if c_idx + 1 < len(argv):
             command_to_run = argv[c_idx + 1]
-            argv = argv[:c_idx] + argv[c_idx + 2:]
+            argv = argv[:c_idx] + argv[c_idx + 2 :]
     elif "--command" in argv:
         c_idx = argv.index("--command")
         if c_idx + 1 < len(argv):
             command_to_run = argv[c_idx + 1]
-            argv = argv[:c_idx] + argv[c_idx + 2:]
+            argv = argv[:c_idx] + argv[c_idx + 2 :]
 
     from clownfish.config import TerminalConfig
 
@@ -349,7 +351,9 @@ def main(args: list[str] | None = None) -> None:
     if argv and argv[0] == "ssh":
         import argparse
 
-        parser = argparse.ArgumentParser(prog="clownfish ssh", description="Connect to remote SSH host")
+        parser = argparse.ArgumentParser(
+            prog="clownfish ssh", description="Connect to remote SSH host"
+        )
         parser.add_argument("destination", help="Remote host or user@host")
         parser.add_argument("-p", "--port", type=int, default=22, help="SSH port")
         parser.add_argument("-i", "--identity-file", help="Identity file path")
@@ -420,7 +424,7 @@ def main(args: list[str] | None = None) -> None:
         try:
             app_icon = tk.PhotoImage(file=str(icon_path), master=root)
             root.iconphoto(True, app_icon)
-        except (tk.TclError, OSError, RuntimeError):
+        except tk.TclError, OSError, RuntimeError:
             pass
 
     _ = TkTerminalApp(root, cols=80, rows=24, config=config)

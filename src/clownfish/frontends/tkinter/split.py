@@ -32,7 +32,11 @@ class SplitView(tk.Frame):
         create_initial_pane: bool = True,
         **kwargs,
     ) -> None:
-        super().__init__(master, bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg), **kwargs)
+        super().__init__(
+            master,
+            bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg),
+            **kwargs,
+        )
         self.config = config or TerminalConfig()
         self.on_pane_focus = on_pane_focus
         self.on_pane_close = on_pane_close
@@ -105,7 +109,9 @@ class SplitView(tk.Frame):
                 ),
             )
         if isinstance(widget, tk.PanedWindow):
-            orient = "horizontal" if str(widget.cget("orient")) == str(tk.HORIZONTAL) else "vertical"
+            orient = (
+                "horizontal" if str(widget.cget("orient")) == str(tk.HORIZONTAL) else "vertical"
+            )
             child_states = []
             for child_name in widget.panes():
                 child_w = self.nametowidget(child_name)
@@ -209,13 +215,25 @@ class SplitView(tk.Frame):
         """Return all active terminal panes."""
         return list(self._panes)
 
-    def split(self, target_pane: TerminalPane | None = None, orientation: str = "vertical") -> TerminalPane:
+    def apply_config(self, config: TerminalConfig) -> None:
+        """Propagate configuration update to all child panes."""
+        self.config = config
+        for p in self._panes:
+            p.apply_config(config)
+
+    def split(
+        self, target_pane: TerminalPane | None = None, orientation: str = "vertical"
+    ) -> TerminalPane:
         """Split target pane (or active pane) in two along orientation ('horizontal' or 'vertical')."""
         target = target_pane or self.active_pane or (self._panes[0] if self._panes else None)
         target_cwd = (
             target.session.cwd
             if target and getattr(target, "session", None) and target.session.cwd
-            else (self.active_pane.session.cwd if self.active_pane and getattr(self.active_pane, "session", None) else None)
+            else (
+                self.active_pane.session.cwd
+                if self.active_pane and getattr(self.active_pane, "session", None)
+                else None
+            )
         )
         if target_cwd and not os.path.isdir(target_cwd):
             target_cwd = str(Path.home())
@@ -395,5 +413,5 @@ class SplitView(tk.Frame):
                 try:
                     child = self.nametowidget(p)
                     self._equalize_widget(child)
-                except (KeyError, tk.TclError):
+                except KeyError, tk.TclError:
                     pass

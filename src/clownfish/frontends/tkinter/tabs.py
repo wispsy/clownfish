@@ -95,7 +95,12 @@ class TabbedTerminalView(tk.Frame):
         tab_idx = len(self.tabs) + 1
         tab_title = title or f"Terminal {tab_idx}"
         target_cwd = cwd
-        if target_cwd is None and self.active_pane and getattr(self.active_pane, "session", None) and self.active_pane.session.cwd:
+        if (
+            target_cwd is None
+            and self.active_pane
+            and getattr(self.active_pane, "session", None)
+            and self.active_pane.session.cwd
+        ):
             target_cwd = self.active_pane.session.cwd
         if target_cwd and not os.path.isdir(target_cwd):
             target_cwd = str(Path.home())
@@ -136,6 +141,27 @@ class TabbedTerminalView(tk.Frame):
             active_pane.focus()
             if self.on_title_changed:
                 self.on_title_changed(self.tabs[index][0])
+
+    def apply_config(self, config: TerminalConfig) -> None:
+        """Propagate updated configuration and theme to all tabs and split views."""
+        self.config = config
+        try:
+            self.tab_bar.configure(bg=config.tab_bar_bg)
+            self._tabs_container.configure(bg=config.tab_bar_bg)
+            self._add_btn.configure(
+                bg=config.tab_bar_bg,
+                fg=config.tab_fg,
+                activebackground=config.tab_active_bg,
+                activeforeground=config.tab_active_fg,
+            )
+            self.content_frame.configure(bg=config.tab_active_bg)
+        except tk.TclError, AttributeError:
+            pass
+
+        for _, sv in self.tabs:
+            sv.apply_config(config)
+
+        self._render_tab_bar()
 
     def close_tab(self, index: int | None = None) -> None:
         """Close tab at index (defaulting to current active tab)."""
@@ -187,7 +213,7 @@ class TabbedTerminalView(tk.Frame):
                     )
                     if not confirmed:
                         return False
-                except (tk.TclError, OSError, RuntimeError):
+                except tk.TclError, OSError, RuntimeError:
                     return False
 
         self.close_tab(index)
