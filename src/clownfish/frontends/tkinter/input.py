@@ -28,12 +28,31 @@ def is_application_shortcut(event: tk.Event) -> bool:
     sym = event.keysym.lower()
 
     if is_mac and has_cmd:
-        if sym in ("t", "w", "d", "f", "k", "c", "v", "bracketleft", "bracketright", "equal"):
+        if sym in (
+            "t",
+            "w",
+            "d",
+            "f",
+            "k",
+            "c",
+            "v",
+            "bracketleft",
+            "bracketright",
+            "equal",
+            "comma",
+            "0",
+            "minus",
+        ):
             return True
         if event.keysym in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
             return True
-        if event.keysym in ("Up", "Down"):
+        if event.keysym in ("Up", "Down", "Home", "End"):
             return True
+        if has_alt and sym in ("k", "l"):
+            return True
+
+    if has_ctrl and sym in ("comma",):
+        return True
 
     if has_ctrl and event.keysym in ("Tab", "ISO_Left_Tab"):
         return True
@@ -47,7 +66,7 @@ def is_application_shortcut(event: tk.Event) -> bool:
     if has_ctrl and has_shift and sym in ("t", "w", "d", "f", "k", "c", "v"):
         return True
 
-    if not is_mac and has_ctrl and event.keysym in ("Up", "Down"):
+    if not is_mac and has_ctrl and event.keysym in ("Up", "Down", "Home", "End"):
         return True
 
     return bool(has_alt and event.keysym in ("1", "2", "3", "4", "5", "6", "7", "8", "9"))
@@ -60,17 +79,25 @@ class TkInputHandler:
         self.session = session
         self.selection = Selection()
 
-    def pixel_to_cell(self, x: int, y: int, cell_w: int, cell_h: int) -> tuple[int, int]:
+    def pixel_to_cell(
+        self, x: int, y: int, cell_w: int, cell_h: int, pad_x: int = 0, pad_y: int = 0
+    ) -> tuple[int, int]:
         """Convert pixel coordinates to zero-indexed character column and row."""
-        col = max(0, min(self.session.cols - 1, x // cell_w))
-        row = max(0, min(self.session.rows - 1, y // cell_h))
+        col = max(0, min(self.session.cols - 1, (x - pad_x) // cell_w))
+        row = max(0, min(self.session.rows - 1, (y - pad_y) // cell_h))
         return col, row
 
     def on_button_1_press(
-        self, event: tk.Event, cell_w: int, cell_h: int, canvas: tk.Canvas
+        self,
+        event: tk.Event,
+        cell_w: int,
+        cell_h: int,
+        canvas: tk.Canvas,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Handle primary mouse button down."""
-        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
         if self.session.parser.mouse_tracking:
             self.session.send_mouse(0, col, row, release=False)
             return
@@ -93,27 +120,38 @@ class TkInputHandler:
         canvas.focus_set()
 
     def on_button_1_motion(
-        self, event: tk.Event, cell_w: int, cell_h: int
+        self,
+        event: tk.Event,
+        cell_w: int,
+        cell_h: int,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Handle mouse drag selection or button-event tracking."""
         if self.session.parser.mouse_tracking:
             if getattr(self.session.parser, "mouse_button_motion", False) or getattr(
                 self.session.parser, "mouse_all_motion", False
             ):
-                col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+                col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
                 self.session.send_mouse(32, col, row, release=False)
             return
         if not self.selection.active:
             return
-        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
         self.selection.end_col = col
         self.selection.end_row = row
 
     def on_button_1_release(
-        self, event: tk.Event, cell_w: int, cell_h: int, canvas: tk.Canvas
+        self,
+        event: tk.Event,
+        cell_w: int,
+        cell_h: int,
+        canvas: tk.Canvas,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Handle mouse button release."""
-        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
         if self.session.parser.mouse_tracking:
             self.session.send_mouse(0, col, row, release=True)
             return
@@ -122,12 +160,17 @@ class TkInputHandler:
             canvas.delete("selection_box")
 
     def on_double_click(
-        self, event: tk.Event, cell_w: int, cell_h: int
+        self,
+        event: tk.Event,
+        cell_w: int,
+        cell_h: int,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Expand selection to word under pointer."""
         if self.session.parser.mouse_tracking:
             return
-        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
         row_cells = self.session.screen.get_visible_row(row)
 
         start_col = col
@@ -135,7 +178,9 @@ class TkInputHandler:
             start_col -= 1
 
         end_col = col
-        while end_col < self.session.cols - 1 and row_cells[end_col + 1].char not in WORD_DELIMITERS:
+        while (
+            end_col < self.session.cols - 1 and row_cells[end_col + 1].char not in WORD_DELIMITERS
+        ):
             end_col += 1
 
         self.selection = Selection(
@@ -147,12 +192,17 @@ class TkInputHandler:
         )
 
     def on_triple_click(
-        self, event: tk.Event, cell_w: int, cell_h: int
+        self,
+        event: tk.Event,
+        cell_w: int,
+        cell_h: int,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Select entire line under pointer."""
         if self.session.parser.mouse_tracking:
             return
-        _col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        _col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
         self.selection = Selection(
             active=True,
             start_col=0,
@@ -162,10 +212,16 @@ class TkInputHandler:
         )
 
     def on_pointer_motion(
-        self, event: tk.Event, cell_w: int, cell_h: int, canvas: tk.Canvas
+        self,
+        event: tk.Event,
+        cell_w: int,
+        cell_h: int,
+        canvas: tk.Canvas,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Update cursor shape for OSC 8 hyperlinks or report motion in any-event tracking."""
-        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+        col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
         if getattr(self.session.parser, "mouse_all_motion", False):
             self.session.send_mouse(35, col, row, release=False)
             return
@@ -177,17 +233,25 @@ class TkInputHandler:
             canvas.config(cursor="xterm")
 
     def on_mouse_scroll(
-        self, delta: int, event: tk.Event | None, cell_w: int, cell_h: int, canvas: tk.Canvas
+        self,
+        delta: int,
+        event: tk.Event | None,
+        cell_w: int,
+        cell_h: int,
+        canvas: tk.Canvas,
+        pad_x: int = 0,
+        pad_y: int = 0,
     ) -> None:
         """Scroll view or send mouse wheel reporting."""
         if self.session.parser.mouse_tracking and event is not None:
-            col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h)
+            col, row = self.pixel_to_cell(event.x, event.y, cell_w, cell_h, pad_x, pad_y)
             btn = 64 if delta < 0 else 65
             self.session.send_mouse(btn, col, row, release=False)
             return
 
         canvas.delete("selection_box")
         self.selection.active = False
+        self.session.screen.scroll_view(-delta)
         self.session.screen.scroll_view(-delta)
 
     def on_key_press(self, event: tk.Event, canvas: tk.Canvas) -> str:

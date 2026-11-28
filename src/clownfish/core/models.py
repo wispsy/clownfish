@@ -10,6 +10,26 @@ DEFAULT_BG: tuple[int, int, int] = (20, 20, 25)
 WORD_DELIMITERS: set[str] = set(" \t\n\r()[]{}\"'`:;,=")
 
 
+# Codepoints in 0x2600..0x26FF with default emoji presentation (2 columns)
+EMOJI_PRESENTATION_2600: frozenset[int] = frozenset(
+    {
+        0x26A1,  # ⚡ high voltage
+        0x26BD,  # ⚽ soccer ball
+        0x26BE,  # ⚾ baseball
+        0x26C4,  # ⛄ snowman without snow
+        0x26C5,  # ⛅ sun behind cloud
+        0x26CE,  # ⛎ ophiuchus
+        0x26D4,  # ⛔ no entry
+        0x26EA,  # ⛪ church
+        0x26F2,  # ⛲ fountain
+        0x26F3,  # ⛳ flag in hole
+        0x26F5,  # ⛵ sailboat
+        0x26FA,  # ⛺ tent
+        0x26FD,  # ⛽ fuel pump
+    }
+)
+
+
 def char_width(char: str) -> int:
     """Return the display column width (0, 1, or 2) of a character in monospace terminals."""
     if not char:
@@ -34,8 +54,7 @@ def char_width(char: str) -> int:
         or (0x1F680 <= cp <= 0x1F6FF)
         or (0x1F900 <= cp <= 0x1F9FF)
         or (0x1FA70 <= cp <= 0x1FAFF)
-        or (0x2600 <= cp <= 0x26FF)
-        or (0x2700 <= cp <= 0x27BF)
+        or cp in EMOJI_PRESENTATION_2600
     ):
         return 2
     return 1
@@ -53,9 +72,7 @@ class Style:
     reverse: bool = False
 
     def copy(self) -> Style:
-        return Style(
-            self.fg, self.bg, self.bold, self.italic, self.underline, self.reverse
-        )
+        return Style(self.fg, self.bg, self.bold, self.italic, self.underline, self.reverse)
 
     def is_default(self) -> bool:
         """Return True if style has default foreground, background, and no attributes."""
@@ -87,7 +104,9 @@ class Row(list[Cell]):
         self.is_wrapped = is_wrapped
 
     def copy(self) -> Row:
-        return Row([dataclasses.replace(c, style=c.style.copy()) for c in self], is_wrapped=self.is_wrapped)
+        return Row(
+            [dataclasses.replace(c, style=c.style.copy()) for c in self], is_wrapped=self.is_wrapped
+        )
 
 
 @dataclasses.dataclass
@@ -153,4 +172,3 @@ class GraphicPlacement:
     cursor_advance: bool = True
     base64_data: str = ""
     version: int = 1
-

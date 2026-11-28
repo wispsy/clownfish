@@ -16,9 +16,20 @@ def test_char_width_classification():
     assert char_width("世") == 2
     assert char_width("界") == 2
 
+    # Prompt symbols and dingbats (Single width in monospace terminals)
+    assert char_width("❯") == 1
+    assert char_width("›") == 1
+    assert char_width(">") == 1
+    assert char_width("✓") == 1
+    assert char_width("✗") == 1
+    assert char_width("★") == 1
+
     # Emojis (Wide)
     assert char_width("🚀") == 2
     assert char_width("🔥") == 2
+    assert char_width("⚡") == 2
+    assert char_width("⚽") == 2
+    assert char_width("✨") == 2
 
     # Zero-width / combining marks
     assert char_width("\u200d") == 0  # ZWJ

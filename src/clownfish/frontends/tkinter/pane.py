@@ -5,8 +5,10 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 from collections.abc import Callable
+from tkinter import ttk
 
 from clownfish.config import TerminalConfig
+from clownfish.core.accessibility import AccessibleTextBridge
 from clownfish.core.search import SearchMatch, SearchState, search_screen
 from clownfish.frontends.tkinter.input import TkInputHandler
 from clownfish.frontends.tkinter.renderer import TkCanvasRenderer
@@ -29,7 +31,11 @@ class TerminalPane(tk.Frame):
         cwd: str | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(master, bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg), **kwargs)
+        super().__init__(
+            master,
+            bg=TkCanvasRenderer.rgb_to_hex((config or TerminalConfig()).default_bg),
+            **kwargs,
+        )
         self.config = config or TerminalConfig(cols=cols, rows=rows)
         self.cols = cols
         self.rows = rows
@@ -59,24 +65,34 @@ class TerminalPane(tk.Frame):
         self.parser = self.session.parser
         self.search_state = SearchState()
 
+        # Vertical Scrollbar
+        self.scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self._on_scrollbar_action)
+        if getattr(self.config, "show_scrollbar", True):
+            self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
         # Canvas
         self.canvas = tk.Canvas(
             self,
             width=self.cols * 8,
             height=self.rows * 16,
             bg=TkCanvasRenderer.rgb_to_hex(self.config.default_bg),
-            highlightthickness=1,
-            highlightbackground="#2a2a32",
-            highlightcolor="#4a90e2",
+            highlightthickness=0,
+            borderwidth=0,
         )
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self.renderer = TkCanvasRenderer(self.canvas, self.config)
         self.cell_w = self.renderer.cell_w
         self.cell_h = self.renderer.cell_h
-        self.canvas.config(width=self.cols * self.cell_w, height=self.rows * self.cell_h)
+        self.canvas.config(
+            width=self.cols * self.cell_w + 2 * self.renderer.pad_x,
+            height=self.rows * self.cell_h + 2 * self.renderer.pad_y,
+        )
 
         self.input_handler = TkInputHandler(self.session)
+        self.a11y_bridge = AccessibleTextBridge(
+            enabled=getattr(self.config, "screen_reader_mode", False)
+        )
 
         # Search Bar Overlay (hidden by default)
         self._search_frame: tk.Frame | None = None
@@ -100,11 +116,18 @@ class TerminalPane(tk.Frame):
 
     def _init_search_bar(self) -> None:
         self._search_frame = tk.Frame(self, bg="#202025", padx=6, pady=4)
-        lbl = tk.Label(self._search_frame, text="Find:", fg="#cccccc", bg="#202025", font=("Helvetica", 11))
+        lbl = tk.Label(
+            self._search_frame, text="Find:", fg="#cccccc", bg="#202025", font=("Helvetica", 11)
+        )
         lbl.pack(side=tk.LEFT, padx=(0, 4))
 
         self._search_entry = tk.Entry(
-            self._search_frame, bg="#2d2d35", fg="#ffffff", insertbackground="#ffffff", width=20, font=("Helvetica", 11)
+            self._search_frame,
+            bg="#2d2d35",
+            fg="#ffffff",
+            insertbackground="#ffffff",
+            width=20,
+            font=("Helvetica", 11),
         )
         self._search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
         self._search_entry.bind("<KeyRelease>", self._on_search_text_changed)
@@ -118,17 +141,35 @@ class TerminalPane(tk.Frame):
         self._search_label.pack(side=tk.LEFT, padx=4)
 
         prev_btn = tk.Button(
-            self._search_frame, text="▲", command=self.search_prev, relief=tk.FLAT, bg="#2d2d35", fg="#ffffff", padx=4
+            self._search_frame,
+            text="▲",
+            command=self.search_prev,
+            relief=tk.FLAT,
+            bg="#2d2d35",
+            fg="#ffffff",
+            padx=4,
         )
         prev_btn.pack(side=tk.LEFT, padx=1)
 
         next_btn = tk.Button(
-            self._search_frame, text="▼", command=self.search_next, relief=tk.FLAT, bg="#2d2d35", fg="#ffffff", padx=4
+            self._search_frame,
+            text="▼",
+            command=self.search_next,
+            relief=tk.FLAT,
+            bg="#2d2d35",
+            fg="#ffffff",
+            padx=4,
         )
         next_btn.pack(side=tk.LEFT, padx=1)
 
         close_btn = tk.Button(
-            self._search_frame, text="✕", command=self.close_search, relief=tk.FLAT, bg="#202025", fg="#aaaaaa", padx=4
+            self._search_frame,
+            text="✕",
+            command=self.close_search,
+            relief=tk.FLAT,
+            bg="#202025",
+            fg="#aaaaaa",
+            padx=4,
         )
         close_btn.pack(side=tk.LEFT, padx=(4, 0))
 
@@ -145,10 +186,12 @@ class TerminalPane(tk.Frame):
         self.canvas.bind("<Triple-Button-1>", self._on_triple_click)
         self.canvas.bind("<Motion>", self._on_pointer_motion)
 
-        # Mouse Wheel
+        # Mouse Wheel (bound on canvas, pane frame, and scrollbar)
         self.canvas.bind("<Button-4>", lambda e: self._on_mouse_scroll(-3, e))
         self.canvas.bind("<Button-5>", lambda e: self._on_mouse_scroll(3, e))
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<MouseWheel>", self._on_mousewheel)
+        self.scrollbar.bind("<MouseWheel>", self._on_mousewheel)
 
         # Key press
         self.canvas.bind("<KeyPress>", self._on_key_press)
@@ -182,36 +225,67 @@ class TerminalPane(tk.Frame):
 
     def _on_button_1_press(self, event: tk.Event) -> None:
         self.focus()
-        self.input_handler.on_button_1_press(event, self.cell_w, self.cell_h, self.canvas)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_button_1_press(
+            event, self.cell_w, self.cell_h, self.canvas, pad_x, pad_y
+        )
         self.renderer.draw_selection(self.input_handler.selection, self.cols)
 
     def _on_button_1_motion(self, event: tk.Event) -> None:
-        self.input_handler.on_button_1_motion(event, self.cell_w, self.cell_h)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_button_1_motion(event, self.cell_w, self.cell_h, pad_x, pad_y)
         self.renderer.draw_selection(self.input_handler.selection, self.cols)
 
     def _on_button_1_release(self, event: tk.Event) -> None:
-        self.input_handler.on_button_1_release(event, self.cell_w, self.cell_h, self.canvas)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_button_1_release(
+            event, self.cell_w, self.cell_h, self.canvas, pad_x, pad_y
+        )
 
     def _on_double_click(self, event: tk.Event) -> None:
-        self.input_handler.on_double_click(event, self.cell_w, self.cell_h)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_double_click(event, self.cell_w, self.cell_h, pad_x, pad_y)
         self.renderer.draw_selection(self.input_handler.selection, self.cols)
 
     def _on_triple_click(self, event: tk.Event) -> None:
-        self.input_handler.on_triple_click(event, self.cell_w, self.cell_h)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_triple_click(event, self.cell_w, self.cell_h, pad_x, pad_y)
         self.renderer.draw_selection(self.input_handler.selection, self.cols)
 
     def _on_pointer_motion(self, event: tk.Event) -> None:
-        self.input_handler.on_pointer_motion(event, self.cell_w, self.cell_h, self.canvas)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_pointer_motion(
+            event, self.cell_w, self.cell_h, self.canvas, pad_x, pad_y
+        )
 
     def _on_mousewheel(self, event: tk.Event) -> None:
-        delta = -event.delta if sys.platform == "darwin" else (-1 if event.delta > 0 else 1) * 3
+        if sys.platform == "darwin":
+            if event.delta == 0:
+                return
+            delta = -3 if event.delta > 0 else 3
+        else:
+            delta = -3 if event.delta > 0 else 3
         self._on_mouse_scroll(delta, event)
 
     def _on_mouse_scroll(self, delta: int, event: tk.Event | None = None) -> None:
-        self.input_handler.on_mouse_scroll(delta, event, self.cell_w, self.cell_h, self.canvas)
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        self.input_handler.on_mouse_scroll(
+            delta, event, self.cell_w, self.cell_h, self.canvas, pad_x, pad_y
+        )
         if self.search_state.matches:
             self.renderer.draw_search_matches(
-                self.search_state.matches, self.search_state.current_match, self.screen, self.cols, self.rows
+                self.search_state.matches,
+                self.search_state.current_match,
+                self.screen,
+                self.cols,
+                self.rows,
             )
 
     def _on_key_press(self, event: tk.Event) -> str:
@@ -291,11 +365,73 @@ class TerminalPane(tk.Frame):
             self.screen.scroll_offset = max(0, min(sb_len, target_offset))
             self.screen.mark_all_dirty()
 
+    # --- Scrollbar & Configuration ---
+
+    def _on_scrollbar_action(self, *args) -> None:
+        """Handle vertical scrollbar navigation."""
+        if not args:
+            return
+        action = args[0]
+        sb_len = len(self.screen.scrollback)
+        total_lines = sb_len + self.rows
+        if action == "moveto" and len(args) > 1:
+            try:
+                fraction = float(args[1])
+                target_top = int(fraction * total_lines)
+                target_offset = max(0, min(sb_len, sb_len - target_top))
+                if target_offset != self.screen.scroll_offset:
+                    self.screen.scroll_offset = target_offset
+                    self.screen.mark_all_dirty()
+            except ValueError, TypeError:
+                pass
+        elif action == "scroll" and len(args) > 2:
+            try:
+                count = int(args[1])
+                unit = args[2]
+                if unit == "units":
+                    self.screen.scroll_view(-count * 3)
+                elif unit == "pages":
+                    self.screen.scroll_view(-count * max(1, self.rows - 1))
+            except ValueError, TypeError:
+                pass
+
+    def apply_config(self, config: TerminalConfig) -> None:
+        """Apply updated configuration, metrics, theme colors, and scrollbar visibility."""
+        self.config = config
+        self.renderer.update_config(config)
+        self.cell_w = self.renderer.cell_w
+        self.cell_h = self.renderer.cell_h
+        self.configure(bg=TkCanvasRenderer.rgb_to_hex(config.default_bg))
+        self.canvas.configure(bg=TkCanvasRenderer.rgb_to_hex(config.default_bg))
+        if hasattr(self, "scrollbar"):
+            if getattr(config, "show_scrollbar", True):
+                if not self.scrollbar.winfo_viewable():
+                    self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            else:
+                if self.scrollbar.winfo_viewable():
+                    self.scrollbar.pack_forget()
+        self.a11y_bridge.enabled = getattr(config, "screen_reader_mode", False)
+        self.screen.mark_all_dirty()
+
+    def announce_current_line(self) -> None:
+        """Announce current line for accessibility / screen readers."""
+        status = self.a11y_bridge.get_status_description(self.screen)
+        self.a11y_bridge.announce(status)
+
     # --- Resize & Session Events ---
 
     def _on_configure(self, event: tk.Event) -> None:
-        new_cols = max(10, event.width // self.cell_w)
-        new_rows = max(5, event.height // self.cell_h)
+        sb_w = (
+            self.scrollbar.winfo_width()
+            if (hasattr(self, "scrollbar") and self.scrollbar.winfo_viewable())
+            else 0
+        )
+        pad_x = self.renderer.pad_x
+        pad_y = self.renderer.pad_y
+        avail_w = max(1, event.width - sb_w - 2 * pad_x)
+        avail_h = max(1, event.height - 2 * pad_y)
+        new_cols = max(10, avail_w // self.cell_w)
+        new_rows = max(5, avail_h // self.cell_h)
         if new_cols != self.cols or new_rows != self.rows:
             self.cols = new_cols
             self.rows = new_rows
@@ -320,15 +456,34 @@ class TerminalPane(tk.Frame):
             self.renderer.render(self.screen, self.cols, self.rows)
             if self.search_state.matches:
                 self.renderer.draw_search_matches(
-                    self.search_state.matches, self.search_state.current_match, self.screen, self.cols, self.rows
+                    self.search_state.matches,
+                    self.search_state.current_match,
+                    self.screen,
+                    self.cols,
+                    self.rows,
                 )
+
+            # Update scrollbar position
+            if hasattr(self, "scrollbar") and self.scrollbar.winfo_viewable():
+                sb_len = len(self.screen.scrollback)
+                if sb_len == 0:
+                    self.scrollbar.set(0.0, 1.0)
+                else:
+                    total = sb_len + self.rows
+                    top_idx = sb_len - self.screen.scroll_offset
+                    first = max(0.0, min(1.0, top_idx / total))
+                    last = max(0.0, min(1.0, (top_idx + self.rows) / total))
+                    self.scrollbar.set(first, last)
+
+            # Update accessibility bridge
+            self.a11y_bridge.update_cursor_state(self.screen)
         else:
             self.screen.mark_all_dirty()
 
         try:
             delay = 1 if has_pending else (16 if is_viewable else 100)
             self._tick_job = self.after(delay, self._render_tick)
-        except (tk.TclError, RuntimeError):
+        except tk.TclError, RuntimeError:
             pass
 
     def _on_title_changed(self, new_title: str) -> None:
@@ -348,7 +503,7 @@ class TerminalPane(tk.Frame):
         if self._tick_job is None:
             try:
                 self._tick_job = self.after_idle(self._render_tick)
-            except (tk.TclError, OSError, RuntimeError):
+            except tk.TclError, OSError, RuntimeError:
                 pass
 
     def _on_clipboard_write(self, selection: str, text: str) -> None:
@@ -358,7 +513,7 @@ class TerminalPane(tk.Frame):
         try:
             self.clipboard_clear()
             self.clipboard_append(text)
-        except (tk.TclError, OSError):
+        except tk.TclError, OSError:
             pass
 
     def _on_clipboard_query(self, selection: str) -> str:
@@ -367,21 +522,21 @@ class TerminalPane(tk.Frame):
             return ""
         try:
             return self.clipboard_get()
-        except (tk.TclError, OSError):
+        except tk.TclError, OSError:
             return ""
 
     def _on_notification(self, title: str, message: str) -> None:
         """Handle desktop notification request (OSC 9 / OSC 777)."""
         try:
             self.bell()
-        except (tk.TclError, OSError):
+        except tk.TclError, OSError:
             pass
 
     def _on_bell(self) -> None:
         """Handle bell request from parser or OSC."""
         try:
             self.bell()
-        except (tk.TclError, OSError):
+        except tk.TclError, OSError:
             pass
 
     def has_foreground_process(self) -> bool:
@@ -395,11 +550,11 @@ class TerminalPane(tk.Frame):
         if self._tick_job:
             try:
                 self.after_cancel(self._tick_job)
-            except (tk.TclError, OSError, RuntimeError):
+            except tk.TclError, OSError, RuntimeError:
                 pass
             self._tick_job = None
         self.session.close()
         try:
             self.destroy()
-        except (tk.TclError, OSError, RuntimeError):
+        except tk.TclError, OSError, RuntimeError:
             pass

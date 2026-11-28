@@ -37,6 +37,11 @@ class TerminalConfig:
     restore_session: bool = True
     auto_reconnect_ssh: bool = True
     enable_ligatures: bool = False
+    padding_x: int = 8
+    padding_y: int = 6
+    show_scrollbar: bool = True
+    theme: str = "clownfish_dark"
+    screen_reader_mode: bool = False
 
     @staticmethod
     def default_config_path() -> Path:
@@ -82,6 +87,6 @@ class TerminalConfig:
                 data = json.load(f)
             if isinstance(data, dict):
                 return cls.from_dict(data)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             pass
         return cls()
